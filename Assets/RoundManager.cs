@@ -1,28 +1,49 @@
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 public class RoundManager : MonoBehaviour
 {
-    private int roundsToWin;
+    [SerializeField]private int roundsToWin;
     private int currentRound;
     public int teamPinkScore;
     public int teamRedScore;
+    // I think we have to tag the object with a player tag?? So the game knows whats a player and whats not
+    GameObject[] players = GameObject.FindGameObjectsWithTag("Player");
+
+    // Systems:
+    SpawnSystem spawnSystem;
+    TeamSystem teamSystem;
+    Countdown countdown;
+
     // The main manager for the round system
     void Start()
     {
-        // When the game starts, designate teams, then spawn them in their respective spawns
-        // Start a small countdown before each round ie.. (3..2..1.. FIGHT!)
-        // If time runs out, its a draw, no one gains a point
-        // After 20-30 seconds, power ups spawn in the middle. 
-        // If all members of a team die, they lose; Other team gains a point. 
-        // Game ends once one of the scores reaches the required roundsToWin
 
-        //Systems needed:
-        // * Spawn System
-        // * PowerUp System
-        // * TeamDesignator System
+        // TODO: Figure out a way to ensure each player is assigned to a game object
+        StartRoundLoop();
+        // TODO: Start a 3 second countdown before each round.
+      
 
-        // I'll try and have the main framework for this code done by Thursday. -Samir
+        
+
     }
 
+   private IEnumerator StartRoundLoop()
+    {
+        TeamSystem.Teams newTeams = teamSystem.DesignateTeam(players);
+        while (teamRedScore < roundsToWin || teamPinkScore < roundsToWin)
+        {
+            
+            spawnSystem.spawnTeams(newTeams.pinkTeam, newTeams.redTeam);
+            countdown.isTimerOn = true;
+            // Round Started
+            yield return new WaitUntil(() => !countdown.isTimerOn); // Wait until timer ends or all players on a team die
 
+            // TODO: Determine who won round, reset it and add the respective points
+            spawnSystem.despawnTeams(newTeams.pinkTeam, newTeams.redTeam); // I have no idea if this function will be useful or not :/
+    
+            
+        }
+    }
 }
