@@ -6,9 +6,12 @@ public class TeamSystem : MonoBehaviour
     {
         public List<GameObject> pinkTeam;
         public List<GameObject> redTeam;
+        private List<GameObject> deadPinkPlrs;
+        private List<GameObject> deadRedPlrs;
     }
    
     [SerializeField] private int maxPlayersOnTeam;
+
 
 
 
@@ -36,5 +39,25 @@ public class TeamSystem : MonoBehaviour
             }
         }
         return teams;
+    }
+
+    public void CheckWhosAlive(Teams teams)
+    {
+        // Runs every frame
+        foreach (GameObject p in teams.pinkTeam)
+        {
+            if(p.currentHealth <= 0){
+                teams.deadPinkPlrs.Add(p);
+                teams.pinkTeam.Remove(p);
+            }
+            if(teams.pinkTeam.Count <= 0){
+                print("Red wins round");
+                teams.pinkTeam.AddRange(deadPinkPlrs);
+                teams.deadPinkPlrs.Clear();
+                // TODO: End round, add point to red team 
+            }
+
+            // TODO: Add red logic ( just copy pink team logic )
+        }
     }
 }
