@@ -4,11 +4,14 @@ using UnityEngine;
 
 public class RoundManager : MonoBehaviour
 {
-    [SerializeField]private int roundsToWin;
+    public int roundsToWin;
+    [SerializeField]private GameObject PinkUI;
+    [SerializeField]private GameObject RedUI;
     private int currentRound;
     public int teamPinkScore;
     public int teamRedScore;
     public bool inRound;
+    private TeamSystem.Teams currentTeams;
     // I think we have to tag the object with a player tag?? So the game knows whats a player and whats not
     
     // Systems:
@@ -29,24 +32,34 @@ public class RoundManager : MonoBehaviour
 
     }
 
+    void Update()
+    {
+        if(inRound)
+        {
+            teamSystem.CheckWhosAlive(currentTeams);
+        }
+    }
+
+
    private IEnumerator StartRoundLoop(GameObject[] players)
     {
-        TeamSystem.Teams newTeams = teamSystem.DesignateTeam(players);
+        currentTeams = teamSystem.DesignateTeam(players);
         while (teamRedScore < roundsToWin || teamPinkScore < roundsToWin)
         {
-            
-            spawnSystem.spawnTeams(newTeams.pinkTeam, newTeams.redTeam);
+            countdown.remainingTime = 120;
+            spawnSystem.spawnTeams(currentTeams.pinkTeam, currentTeams.redTeam);
             countdown.isTimerOn = true;
             // Round Started
             inRound = true;
-            yield return new WaitUntil(() => !countdown.isTimerOn); // Wait until timer ends or all players on a team die
+            yield return new WaitUntil(() => !countdown.isTimerOn || !inRound); // Wait until timer ends or all players on a team die
             inRound = false;
-            // TODO: Determine who won round, reset it and add the respective points
-
-            spawnSystem.despawnTeams(newTeams.pinkTeam, newTeams.redTeam); // I have no idea if this function will be useful or not :/
+            spawnSystem.despawnTeams(currentTeams.pinkTeam, currentTeams.redTeam); // I have no idea if this function will be useful or not :/
+            
     
             
         }
+
+        
 
     }
 }

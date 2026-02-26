@@ -6,12 +6,12 @@ public class TeamSystem : MonoBehaviour
     {
         public List<GameObject> pinkTeam;
         public List<GameObject> redTeam;
-        private List<GameObject> deadPinkPlrs;
-        private List<GameObject> deadRedPlrs;
+        public List<GameObject> deadPinkPlrs;
+        public List<GameObject> deadRedPlrs;
     }
    
     [SerializeField] private int maxPlayersOnTeam;
-
+    RoundManager roundManager;
 
 
 
@@ -46,18 +46,32 @@ public class TeamSystem : MonoBehaviour
         // Runs every frame
         foreach (GameObject p in teams.pinkTeam)
         {
-            if(p.currentHealth <= 0){
-                teams.deadPinkPlrs.Add(p);
-                teams.pinkTeam.Remove(p);
-            }
+            // if(p.currentHealth <= 0){    Once we get the multiplayer logic implements, this will work (hopefully)
+            //     teams.deadPinkPlrs.Add(p);
+            //     teams.pinkTeam.Remove(p);
+            // }
             if(teams.pinkTeam.Count <= 0){
                 print("Red wins round");
-                teams.pinkTeam.AddRange(deadPinkPlrs);
+                teams.pinkTeam.AddRange(teams.deadPinkPlrs);
                 teams.deadPinkPlrs.Clear();
-                // TODO: End round, add point to red team 
+                roundManager.teamRedScore += 1;
+                roundManager.inRound = false;
+               break; 
             }
 
-            // TODO: Add red logic ( just copy pink team logic )
+            //    if(p.currentHealth <= 0){  
+            //      teams.deadRedPlrs.Add(p);
+            //      teams.redTeam.Remove(p);
+            //  }
+            if(teams.redTeam.Count <= 0){
+                print("Pink wins round");
+                teams.redTeam.AddRange(teams.deadRedPlrs);
+                teams.deadRedPlrs.Clear();
+                roundManager.teamPinkScore += 1;
+                roundManager.inRound = false;
+               break; 
+            }
+
         }
     }
 }
