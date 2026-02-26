@@ -8549,6 +8549,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9ceb1a73195afb147ad5c55c02f6f707, type: 3}
   m_Name: 
   m_EditorClassIdentifier: '::'
+  maxPlayersOnTeam: 0
 --- !u!4 &390208502
 Transform:
   m_ObjectHideFlags: 0
@@ -13098,8 +13099,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: '::'
   roundsToWin: 0
+  PinkUI: {fileID: 147001653}
+  RedUI: {fileID: 1642355148}
   teamPinkScore: 0
   teamRedScore: 0
+  inRound: 0
 --- !u!4 &585698629
 Transform:
   m_ObjectHideFlags: 0
@@ -31388,6 +31392,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: '::'
   timerText: {fileID: 592373230}
   remainingTime: 120
+  isTimerOn: 0
 --- !u!114 &1652497131
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -51193,6 +51198,6 @@ SceneRoots:
   - {fileID: 292872036}
   - {fileID: 1992634979}
   - {fileID: 1652497134}
-  - {fileID: 585698629}
   - {fileID: 652242464}
   - {fileID: 390208502}
+  - {fileID: 585698629}
