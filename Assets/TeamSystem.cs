@@ -24,19 +24,33 @@ public class TeamSystem : MonoBehaviour
         foreach (GameObject p in players)
         {
             float randomInt = Random.Range(0.0f, 1.0f);
-            if (randomInt >= 0.5 && teams.pinkTeam.Count < maxPlayersOnTeam) 
+            if (randomInt >= 0.5) 
             { 
-                teams.pinkTeam.Add(p);
-                print("Added " + p.name + " to pink team.");
+                if(teams.pinkTeam.Count < maxPlayersOnTeam)
+                {
+                    teams.pinkTeam.Add(p);
+                    print("Added " + p.name + " to pink team.");
+                } else
+                {
+                    print("Pink team full, adding " + p.name + "to red team.");
+                    teams.redTeam.Add(p);
+                }
+              
             }
             else if (randomInt < 0.5 && teams.redTeam.Count < maxPlayersOnTeam)
             {
-                teams.redTeam.Add(p);
-                print("Added " + p.name + " to red team.");
-            } else
-            {
-                print("Both teams full");
-            }
+                if(teams.redTeam.Count < maxPlayersOnTeam)
+                {
+                    teams.redTeam.Add(p);
+                    print("Added " + p.name + " to red team.");
+                } else
+                {
+                    print("Red team full, adding " + p.name + "to pink team.");
+                    teams.pinkTeam.Add(p);
+                }
+
+                   
+            } 
         }
         return teams;
     }
