@@ -4,16 +4,16 @@
 TagManager:
   serializedVersion: 3
   tags:
-  - CinemachineTarget
+  - Target
   layers:
   - Default
   - TransparentFX
   - Ignore Raycast
-  - 
+  - Ground
   - Water
   - UI
-  - 
-  - 
+  - Arrow
+  - Player
   - 
   - 
   - 
