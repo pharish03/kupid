@@ -23,7 +23,9 @@ public class TeamSystem : MonoBehaviour
         teams.redTeam = new List<GameObject>();
         foreach (GameObject p in players)
         {
+            Debug.Log("Player: " + p.name);
             float randomInt = Random.Range(0.0f, 1.0f);
+            Debug.Log("Random Chance: " + randomInt);
             if (randomInt >= 0.5) 
             { 
                 if(teams.pinkTeam.Count < maxPlayersOnTeam)
@@ -37,7 +39,7 @@ public class TeamSystem : MonoBehaviour
                 }
               
             }
-            else if (randomInt < 0.5 && teams.redTeam.Count < maxPlayersOnTeam)
+            else if (randomInt < 0.5)
             {
                 if(teams.redTeam.Count < maxPlayersOnTeam)
                 {

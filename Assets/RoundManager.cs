@@ -53,14 +53,14 @@ public class RoundManager : MonoBehaviour
         while (teamRedScore < roundsToWin || teamPinkScore < roundsToWin)
         {
           
-            countdown.remainingTime = 10;
+            countdown.remainingTime = 120;
             spawnSystem.spawnTeams(currentTeams.pinkTeam, currentTeams.redTeam);
             countdown.isTimerOn = true;
             // Round Started
             inRound = true;
             yield return new WaitUntil(() => !countdown.isTimerOn || !inRound); // Wait until timer ends or all players on a team die
             inRound = false;
-            spawnSystem.despawnTeams(currentTeams.pinkTeam, currentTeams.redTeam);
+            
 
 
 
