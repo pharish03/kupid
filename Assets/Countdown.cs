@@ -1,35 +1,38 @@
 using UnityEngine;
-using System.Collections;
 using TMPro;
+using Unity.Netcode;
+
 public class Countdown : MonoBehaviour
 {
     [SerializeField] TextMeshProUGUI timerText;
+
+    // These are set directly by RoundManager (server only)
     public float remainingTime;
     public bool isTimerOn;
+
     void Update()
     {
         if (isTimerOn)
         {
             if (remainingTime > 0)
-            {
                 remainingTime -= Time.deltaTime;
-            }
-            else if (remainingTime < 0)
+            else
             {
                 remainingTime = 0;
                 isTimerOn = false;
-                // TODO: Tell the round manager to count the round as a draw and start a new round
             }
+        }
 
-
+        if (timerText != null && isTimerOn)
+        {
             int minutes = Mathf.FloorToInt(remainingTime / 60);
             int seconds = Mathf.FloorToInt(remainingTime % 60);
             timerText.text = string.Format("{0:00}:{1:00}", minutes, seconds);
         }
-      
     }
 
-    public void setCountdown(float newTime){
+    public void SetCountdown(float newTime)
+    {
         remainingTime = newTime;
     }
 }

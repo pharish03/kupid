@@ -1,72 +1,96 @@
-using System.Collections;
 using UnityEngine;
+using Unity.Netcode;
 
+// Attach to Arrow prefab alongside NetworkObject component
 [RequireComponent(typeof(Rigidbody))]
-public class Arrow : MonoBehaviour
+public class Arrow : NetworkBehaviour
 {
-    [Header("Behavior")]
-    public int maxBounces = 1;                 // bounce once
-    public float destroyAfterLand = 2.5f;      // seconds after landing
-    public float landSpeedThreshold = 1.0f;    // only used AFTER bounce is used
+    public int damage = 25;
+    public ulong shooterOwnerId;
 
+    // Set this on spawn to prevent friendly fire
+    public bool shooterIsPink = false;
+
+    [Header("Flight")]
+    public float rotationSpeed = 15f; // How fast arrow rotates to match velocity direction
+
+    private bool hasHit = false;
+    private bool hasBounced = false;
     private Rigidbody rb;
-    private int bouncesUsed = 0;
-    private bool hasLanded = false;
 
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
-        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
     }
 
-    private void OnCollisionEnter(Collision collision)
+    void Update()
     {
-        if (hasLanded) return;
-
-        // If you hit a target, delete immediately (your original behavior)
-        if (collision.gameObject.CompareTag("Target"))
+        // Rotate arrow to face its velocity direction (gives realistic arc look)
+        if (!hasHit && rb != null && rb.linearVelocity.sqrMagnitude > 0.5f)
         {
-            Debug.Log("hit " + collision.gameObject.name + "!");
-            Destroy(gameObject);
-            return;
+            Quaternion targetRot = Quaternion.LookRotation(rb.linearVelocity);
+            transform.rotation = Quaternion.Lerp(transform.rotation, targetRot, Time.deltaTime * rotationSpeed);
         }
+    }
 
-        // If we still have our bounce available, consume it and let physics bounce naturally.
-        if (bouncesUsed < maxBounces)
-        {
-            bouncesUsed++;
-            return;
-        }
+    void OnCollisionEnter(Collision collision)
+    {
+        if (!IsServer || hasHit) return;
 
-        // After bounce is used, the next collision counts as landing.
-        // Optionally require it to be moving slow enough to "settle".
-        if (rb.linearVelocity.magnitude <= landSpeedThreshold || landSpeedThreshold <= 0f)
+        PlayerMovement player = collision.gameObject.GetComponent<PlayerMovement>();
+
+        if (player != null)
         {
-            Land();
+            // Don't hit shooter
+            if (player.OwnerClientId == shooterOwnerId) return;
+
+            // Friendly fire prevention — check team tags
+            bool targetIsPink = collision.gameObject.CompareTag("PinkTeam");
+            if (targetIsPink == shooterIsPink) return;
+
+            hasHit = true;
+            player.TakeDamageServerRpc(damage);
+
+            if (NetworkObject != null && NetworkObject.IsSpawned)
+                NetworkObject.Despawn();
         }
         else
         {
-            // If it's still fast, you can either Land anyway or let it keep going.
-            // Most people prefer landing immediately after the last bounce:
-            Land();
+            // Hit environment — bounce once, then stick on second hit
+            if (!hasBounced)
+            {
+                hasBounced = true;
+                // Velocity reflection is handled by the Rigidbody's Physics Material
+                // We just reduce speed after the bounce
+                BounceClientRpc();
+            }
+            else
+            {
+                // Already bounced once — now stick
+                hasHit = true;
+                StickToSurfaceClientRpc();
+            }
         }
     }
 
-    private void Land()
+    [ClientRpc]
+    private void BounceClientRpc()
     {
-        if (hasLanded) return;
-        hasLanded = true;
-
-        rb.linearVelocity = Vector3.zero;
-        rb.angularVelocity = Vector3.zero;
-        rb.isKinematic = true;
-
-        StartCoroutine(DestroyAfterSeconds(destroyAfterLand));
+        if (rb != null)
+        {
+            // Reduce speed by half after bounce
+            rb.linearVelocity *= 0.5f;
+        }
     }
 
-    private IEnumerator DestroyAfterSeconds(float seconds)
+    [ClientRpc]
+    private void StickToSurfaceClientRpc()
     {
-        yield return new WaitForSeconds(seconds);
-        Destroy(gameObject);
+        if (rb != null)
+        {
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+            rb.isKinematic = true;
+        }
     }
 }

@@ -1,72 +1,133 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using Unity.Netcode;
 
-public class RoundManager : MonoBehaviour
+public class RoundManager : NetworkBehaviour
 {
-    public int roundsToWin;
+    public int roundsToWin = 6;
+
     [SerializeField] private GameObject PinkUI;
     [SerializeField] private GameObject RedUI;
-    private int currentRound;
-    public int teamPinkScore;
-    public int teamRedScore;
-    public bool inRound;
 
+    // NetworkVariables sync automatically to all clients
+    public NetworkVariable<int> teamPinkScore = new NetworkVariable<int>(0,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
 
-    private Coroutine mainCorutine;
+    public NetworkVariable<int> teamRedScore = new NetworkVariable<int>(0,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
 
-    // I think we have to tag the object with a player tag?? So the game knows whats a player and whats not
+    public NetworkVariable<bool> inRound = new NetworkVariable<bool>(false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
 
-    // Systems:
     [Header("Systems")]
     [SerializeField] SpawnSystem spawnSystem;
     [SerializeField] TeamSystem teamSystem;
     [SerializeField] Countdown countdown;
+
     public TeamSystem.Teams currentTeams;
 
-    // The main manager for the round system
-    void Start()
+    [Header("Match Settings")]
+    public int requiredPlayers = 4; // Set to 2 for testing locally
+
+    public override void OnNetworkSpawn()
     {
+        // Hook up UI updates when scores change
+        teamPinkScore.OnValueChanged += (oldVal, newVal) => UpdateScoreUI();
+        teamRedScore.OnValueChanged += (oldVal, newVal) => UpdateScoreUI();
+
+        // Only the server runs the round loop
+        if (IsServer)
+        {
+            StartCoroutine(WaitForPlayersAndStart());
+        }
+    }
+
+    // Wait until all 4 players are connected before starting
+    private IEnumerator WaitForPlayersAndStart()
+    {
+        yield return new WaitUntil(() => NetworkManager.Singleton.ConnectedClientsList.Count >= requiredPlayers);
+        yield return new WaitForSeconds(1f); // small buffer
+
         GameObject[] players = GameObject.FindGameObjectsWithTag("Player");
-        // TODO: Figure out a way to ensure each player is assigned to a game object
-        mainCorutine = StartCoroutine(StartRoundLoop(players));
-        // TODO: Start a 3 second countdown before each round.
-      
+        StartCoroutine(StartRoundLoop(players));
+    }
 
-        
+    private IEnumerator StartRoundLoop(GameObject[] plrs)
+    {
+        currentTeams = teamSystem.DesignateTeam(plrs);
 
+        while (teamRedScore.Value < roundsToWin && teamPinkScore.Value < roundsToWin)
+        {
+            // Respawn and reset all players
+            spawnSystem.SpawnTeams(currentTeams.pinkTeam, currentTeams.redTeam);
+
+            // Reset health on all players
+            foreach (var p in currentTeams.pinkTeam)
+            {
+                p.GetComponent<PlayerMovement>()?.ResetPlayer(spawnSystem.pinkSpawn.position);
+            }
+            foreach (var p in currentTeams.redTeam)
+            {
+                p.GetComponent<PlayerMovement>()?.ResetPlayer(spawnSystem.redSpawn.position);
+            }
+
+            countdown.remainingTime = 120;
+            countdown.isTimerOn = true;
+            inRound.Value = true;
+
+            // Wait until timer ends or a team is wiped
+            yield return new WaitUntil(() => !countdown.isTimerOn || CheckRoundOver());
+
+            inRound.Value = false;
+
+            // Award point
+            AwardRoundPoint();
+
+            yield return new WaitForSeconds(3f); // pause between rounds
+        }
+
+        AnnounceWinnerClientRpc(teamPinkScore.Value >= roundsToWin ? "Pink" : "Red");
     }
 
     void Update()
     {
-        if(inRound)
-        {
-            teamSystem.CheckWhosAlive(currentTeams);
-        }
+        // Only server checks alive status each frame
+        if (!IsServer || !inRound.Value) return;
+        teamSystem.CheckWhosAlive(currentTeams, this);
     }
 
-
-   private IEnumerator StartRoundLoop(GameObject[] plrs)
+    private bool CheckRoundOver()
     {
-        
-        currentTeams = teamSystem.DesignateTeam(plrs);
-        while (teamRedScore < roundsToWin || teamPinkScore < roundsToWin)
-        {
-          
-            countdown.remainingTime = 120;
-            spawnSystem.spawnTeams(currentTeams.pinkTeam, currentTeams.redTeam);
-            countdown.isTimerOn = true;
-            // Round Started
-            inRound = true;
-            yield return new WaitUntil(() => !countdown.isTimerOn || !inRound); // Wait until timer ends or all players on a team die
-            inRound = false;
-            
+        return currentTeams.pinkTeam.TrueForAll(p => p.GetComponent<PlayerMovement>()?.IsDead ?? true)
+            || currentTeams.redTeam.TrueForAll(p => p.GetComponent<PlayerMovement>()?.IsDead ?? true);
+    }
 
+    private void AwardRoundPoint()
+    {
+        bool pinkAllDead = currentTeams.pinkTeam.TrueForAll(p => p.GetComponent<PlayerMovement>()?.IsDead ?? true);
+        bool redAllDead = currentTeams.redTeam.TrueForAll(p => p.GetComponent<PlayerMovement>()?.IsDead ?? true);
 
+        if (redAllDead && !pinkAllDead)
+            teamPinkScore.Value++;
+        else if (pinkAllDead && !redAllDead)
+            teamRedScore.Value++;
+        // Both dead = draw, no point awarded
+    }
 
-        }
+    private void UpdateScoreUI()
+    {
+        // Hook up your UI text components here
+        Debug.Log($"Pink: {teamPinkScore.Value} | Red: {teamRedScore.Value}");
+    }
 
-        
-
+    [ClientRpc]
+    private void AnnounceWinnerClientRpc(string winningTeam)
+    {
+        Debug.Log($"{winningTeam} team wins the match!");
+        // Show your win screen here
     }
 }

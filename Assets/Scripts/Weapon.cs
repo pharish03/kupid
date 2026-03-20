@@ -1,9 +1,9 @@
 using System.Collections;
 using UnityEngine;
-using UnityEngine.Animations;
 using UnityEngine.InputSystem;
+using Unity.Netcode;
 
-public class Weapon : MonoBehaviour
+public class Weapon : NetworkBehaviour
 {
     [Header("References")]
     public Camera playerCamera;
@@ -21,13 +21,17 @@ public class Weapon : MonoBehaviour
     public float maxVelocity = 60f;
 
     [Header("Effects During Charge")]
-    [Range(0.05f,1f)] public float moveSlowMultiplier = 0.25f;
+    [Range(0.05f, 1f)] public float moveSlowMultiplier = 0.25f;
     public float normalFOV = 90f;
     public float zoomFOV = 60f;
-    public float zoomLerpSpeed= 12f;
+    public float zoomLerpSpeed = 12f;
 
     [Header("Arrow Lifetime")]
     public float arrowPrefabLifeTime = 3f;
+
+    [Header("Damage")]
+    public int minDamage = 10;
+    public int maxDamage = 50;
 
     private InputAction fireAction;
     private bool isCharging;
@@ -40,74 +44,82 @@ public class Weapon : MonoBehaviour
         fireAction.AddBinding("<Gamepad>/rightTrigger");
     }
 
-    void OnEnable() => fireAction.Enable();
-    void OnDisable() => fireAction.Disable();
-
-    void Start()
+    public override void OnNetworkSpawn()
     {
-        if(playerCamera == null) playerCamera = Camera.main;
-        if(playerCamera != null) normalFOV = playerCamera.fieldOfView;
+        if (!IsOwner)
+        {
+            enabled = false; // Only owner fires
+            return;
+        }
+
+        fireAction.Enable();
+
+        if (playerCamera == null) playerCamera = Camera.main;
+        if (playerCamera != null) normalFOV = playerCamera.fieldOfView;
     }
+
+    void OnDisable() => fireAction?.Disable();
 
     void Update()
     {
+        if (!IsOwner) return;
         if (playerCamera == null) return;
+
         if (fireAction.WasPressedThisFrame())
         {
             isCharging = true;
             charge01 = 0f;
-
-            if(playerMovement != null)
-            {
+            if (playerMovement != null)
                 playerMovement.speedMultiplier = moveSlowMultiplier;
-            }
         }
 
-        //while held, build charge
-        if(isCharging && fireAction.IsPressed())
+        if (isCharging && fireAction.IsPressed())
         {
             charge01 += Time.deltaTime / Mathf.Max(0.01f, maxChargeTime);
             charge01 = Mathf.Clamp01(charge01);
         }
 
-        if(isCharging && fireAction.WasReleasedThisFrame())
+        if (isCharging && fireAction.WasReleasedThisFrame())
         {
-            FireChargedArrow(charge01);
+            bool isPink = gameObject.CompareTag("PinkTeam");
+            RequestFireArrowServerRpc(charge01, arrowSpawn.position, GetAimPoint(), isPink);
             isCharging = false;
             charge01 = 0f;
-
             if (playerMovement != null)
-            {
                 playerMovement.speedMultiplier = 1f;
-            }
-
         }
 
-        // zoom while charging
         float targetFov = isCharging ? zoomFOV : normalFOV;
         playerCamera.fieldOfView = Mathf.Lerp(playerCamera.fieldOfView, targetFov, Time.deltaTime * zoomLerpSpeed);
     }
 
-    private void FireChargedArrow(float chargeAmount01)
+    private Vector3 GetAimPoint()
     {
-        if(arrowPrefab == null || arrowSpawn == null) return;
-        
-        // aim point from crosshair
         Ray ray = playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-        Vector3 aimPoint;
-
         if (Physics.Raycast(ray, out RaycastHit hit, aimMaxDistance, aimMask, QueryTriggerInteraction.Ignore))
-            aimPoint = hit.point;
-        else
-            aimPoint = ray.origin + ray.direction * aimMaxDistance;
+            return hit.point;
+        return ray.origin + ray.direction * aimMaxDistance;
+    }
 
-        // Direction from bow spawn -> aim point
-        Vector3 dir = (aimPoint - arrowSpawn.position).normalized;
+    // Server spawns the arrow so it's authoritative
+    [ServerRpc]
+    private void RequestFireArrowServerRpc(float chargeAmount, Vector3 spawnPos, Vector3 aimPoint, bool isPink)
+    {
+        Vector3 dir = (aimPoint - spawnPos).normalized;
+        GameObject arrow = Instantiate(arrowPrefab, spawnPos, Quaternion.LookRotation(dir, Vector3.up));
 
-        GameObject arrow = Instantiate(arrowPrefab, arrowSpawn.position, Quaternion.LookRotation(dir, Vector3.up));
+        Arrow arrowScript = arrow.GetComponent<Arrow>();
+        if (arrowScript != null)
+        {
+            arrowScript.damage = Mathf.RoundToInt(Mathf.Lerp(minDamage, maxDamage, chargeAmount));
+            arrowScript.shooterOwnerId = OwnerClientId;
+            arrowScript.shooterIsPink = isPink;
+        }
 
-        float velocity = Mathf.Lerp(minVelocity, maxVelocity, chargeAmount01);
+        NetworkObject netObj = arrow.GetComponent<NetworkObject>();
+        if (netObj != null) netObj.Spawn();
 
+        float velocity = Mathf.Lerp(minVelocity, maxVelocity, chargeAmount);
         Rigidbody rb = arrow.GetComponent<Rigidbody>();
         if (rb != null)
         {
@@ -122,6 +134,13 @@ public class Weapon : MonoBehaviour
     private IEnumerator DestroyArrowAfterTime(GameObject arrow, float delay)
     {
         yield return new WaitForSeconds(delay);
-        if (arrow != null) Destroy(arrow);
+        if (arrow != null)
+        {
+            NetworkObject netObj = arrow.GetComponent<NetworkObject>();
+            if (netObj != null && netObj.IsSpawned)
+                netObj.Despawn();
+            else
+                Destroy(arrow);
+        }
     }
 }

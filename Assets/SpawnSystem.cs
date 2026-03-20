@@ -1,44 +1,29 @@
-
 using System.Collections.Generic;
 using UnityEngine;
+using Unity.Netcode;
 
-public class SpawnSystem : MonoBehaviour
+public class SpawnSystem : NetworkBehaviour
 {
-
     public Transform pinkSpawn;
     public Transform redSpawn;
 
-
-    // You're supposed to spawn objects a diff way with multiplayer netcode, but the dependency won't work for me right now
-    public void spawnTeams(List<GameObject> pinkTeam, List<GameObject> redTeam)
+    // Server calls this to teleport players to spawn points
+    public void SpawnTeams(List<GameObject> pinkTeam, List<GameObject> redTeam)
     {
-
         for (int i = 0; i < pinkTeam.Count; i++)
         {
-            //Instantiate(pinkTeam[i], pinkSpawn.position, pinkSpawn.rotation);
-            pinkTeam[i].transform.position = pinkSpawn.position;
+            PlayerMovement pm = pinkTeam[i].GetComponent<PlayerMovement>();
+            if (pm != null)
+                pm.ResetPlayer(pinkSpawn.position);
         }
-        print("Spawned pink team");
+
         for (int i = 0; i < redTeam.Count; i++)
         {
-            //Instantiate(redTeam[i], redSpawn.position, redSpawn.rotation);
-            redTeam[i].transform.position = redSpawn.position;
+            PlayerMovement pm = redTeam[i].GetComponent<PlayerMovement>();
+            if (pm != null)
+                pm.ResetPlayer(redSpawn.position);
         }
-        print("Spawned red team");
+
+        Debug.Log("Teams spawned.");
     }
 }
-
-//    public void despawnTeams(List<GameObject> pinkTeam, List<GameObject> redTeam)
-//    {
-//        for (int i = 0; i < pinkTeam.Count; i++)
-//        {
-//            Destroy(pinkTeam[i]);
-//        }
-//        print("Pink team despawned");
-//        for (int i = 0; i < redTeam.Count; i++)
-//        {
-//            Destroy(redTeam[i]);
-//        }
-//        print("Red team despawned");
-//    }
-//}

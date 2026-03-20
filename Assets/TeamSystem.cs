@@ -1,93 +1,70 @@
 using UnityEngine;
 using System.Collections.Generic;
-public class TeamSystem : MonoBehaviour
+using Unity.Netcode;
+
+public class TeamSystem : NetworkBehaviour
 {
     public struct Teams
     {
         public List<GameObject> pinkTeam;
         public List<GameObject> redTeam;
-        public List<GameObject> deadPinkPlrs;
-        public List<GameObject> deadRedPlrs;
     }
-   
-    [SerializeField] private int maxPlayersOnTeam;
-    RoundManager roundManager;
 
+    [SerializeField] private int maxPlayersOnTeam = 2;
 
-
-    // for now teams will be random cuz its easier
-    public Teams DesignateTeam(GameObject[] players) 
+    public Teams DesignateTeam(GameObject[] players)
     {
         Teams teams = new Teams();
         teams.pinkTeam = new List<GameObject>();
         teams.redTeam = new List<GameObject>();
-        foreach (GameObject p in players)
-        {
-            Debug.Log("Player: " + p.name);
-            float randomInt = Random.Range(0.0f, 1.0f);
-            Debug.Log("Random Chance: " + randomInt);
-            if (randomInt >= 0.5) 
-            { 
-                if(teams.pinkTeam.Count < maxPlayersOnTeam)
-                {
-                    teams.pinkTeam.Add(p);
-                    print("Added " + p.name + " to pink team.");
-                } else
-                {
-                    print("Pink team full, adding " + p.name + "to red team.");
-                    teams.redTeam.Add(p);
-                }
-              
-            }
-            else if (randomInt < 0.5)
-            {
-                if(teams.redTeam.Count < maxPlayersOnTeam)
-                {
-                    teams.redTeam.Add(p);
-                    print("Added " + p.name + " to red team.");
-                } else
-                {
-                    print("Red team full, adding " + p.name + "to pink team.");
-                    teams.pinkTeam.Add(p);
-                }
 
-                   
-            } 
+        // Shuffle players first for fair random assignment
+        List<GameObject> shuffled = new List<GameObject>(players);
+        for (int i = shuffled.Count - 1; i > 0; i--)
+        {
+            int j = Random.Range(0, i + 1);
+            (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
         }
+
+        // Assign evenly: first half pink, second half red
+        for (int i = 0; i < shuffled.Count; i++)
+        {
+            if (teams.pinkTeam.Count < maxPlayersOnTeam)
+                teams.pinkTeam.Add(shuffled[i]);
+            else
+                teams.redTeam.Add(shuffled[i]);
+        }
+
+        Debug.Log($"Pink team: {teams.pinkTeam.Count} | Red team: {teams.redTeam.Count}");
+
+        // Tag each player so arrows and other systems know their team
+        foreach (GameObject p in teams.pinkTeam)
+            SetTeamTagClientRpc(new NetworkObjectReference(p.GetComponent<NetworkObject>()), "PinkTeam");
+        foreach (GameObject p in teams.redTeam)
+            SetTeamTagClientRpc(new NetworkObjectReference(p.GetComponent<NetworkObject>()), "RedTeam");
+
         return teams;
     }
 
-    public void CheckWhosAlive(Teams teams)
+    // Runs on all clients so every machine knows each player's team tag
+    [ClientRpc]
+    private void SetTeamTagClientRpc(NetworkObjectReference playerRef, string tag)
     {
-        // Runs every frame
-        foreach (GameObject p in teams.pinkTeam)
+        if (playerRef.TryGet(out NetworkObject netObj))
+            netObj.gameObject.tag = tag;
+    }
+
+    // Fixed: no longer iterates pinkTeam to check if pinkTeam is empty
+    public void CheckWhosAlive(Teams teams, RoundManager roundManager)
+    {
+        if (!roundManager.inRound.Value) return;
+
+        bool pinkAllDead = teams.pinkTeam.TrueForAll(p => p.GetComponent<PlayerMovement>()?.IsDead ?? true);
+        bool redAllDead = teams.redTeam.TrueForAll(p => p.GetComponent<PlayerMovement>()?.IsDead ?? true);
+
+        if (pinkAllDead || redAllDead)
         {
-            // if(p.currentHealth <= 0){    Once we get the multiplayer logic implements, this will work (hopefully)
-            //     teams.deadPinkPlrs.Add(p);
-            //     teams.pinkTeam.Remove(p);
-            // }
-            if(teams.pinkTeam.Count <= 0){
-                print("Red wins round");
-                teams.pinkTeam.AddRange(teams.deadPinkPlrs);
-                teams.deadPinkPlrs.Clear();
-                roundManager.teamRedScore += 1;
-                roundManager.inRound = false;
-               break; 
-            }
-
-            //    if(p.currentHealth <= 0){  
-            //      teams.deadRedPlrs.Add(p);
-            //      teams.redTeam.Remove(p);
-            //  }
-            if(teams.redTeam.Count <= 0){
-                print("Pink wins round");
-                teams.redTeam.AddRange(teams.deadRedPlrs);
-                teams.deadRedPlrs.Clear();
-                roundManager.teamPinkScore += 1;
-                roundManager.inRound = false;
-               break; 
-            }
-
+            roundManager.inRound.Value = false;
         }
     }
 }
