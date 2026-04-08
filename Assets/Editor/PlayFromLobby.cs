@@ -13,9 +13,12 @@ public static class PlayFromLobby
     {
         if (state == PlayModeStateChange.ExitingEditMode)
         {
-            EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo();
             EditorPrefs.SetString("LastScene", EditorSceneManager.GetActiveScene().path);
-            EditorSceneManager.OpenScene("Assets/Scenes/LobbyScene.unity");
+            if (EditorSceneManager.GetActiveScene().path != "Assets/Scenes/LobbyScene.unity")
+            {
+                EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo();
+                EditorSceneManager.OpenScene("Assets/Scenes/LobbyScene.unity");
+            }
         }
 
         if (state == PlayModeStateChange.EnteredEditMode)

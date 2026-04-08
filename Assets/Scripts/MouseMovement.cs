@@ -13,8 +13,12 @@ public class MouseMovement : MonoBehaviour
 
     void Start()
     {
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
+        // Only lock cursor in game scene, not lobby
+        if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "LobbyScene")
+        {
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+        }
     }
 
     void Update()

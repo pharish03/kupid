@@ -75,6 +75,10 @@ public class PlayerMovement : NetworkBehaviour
             return;
         }
 
+        // Hide own mesh in first person
+        foreach (var r in GetComponentsInChildren<Renderer>())
+            r.enabled = false;
+
         InitInput();
     }
 

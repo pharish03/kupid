@@ -31,7 +31,7 @@ public class RoundManager : NetworkBehaviour
     public TeamSystem.Teams currentTeams;
 
     [Header("Match Settings")]
-    public int requiredPlayers = 4; // Set to 2 for testing locally
+    public int requiredPlayers = 2; 
 
     public override void OnNetworkSpawn()
     {
@@ -49,10 +49,18 @@ public class RoundManager : NetworkBehaviour
     // Wait until all 4 players are connected before starting
     private IEnumerator WaitForPlayersAndStart()
     {
-        yield return new WaitUntil(() => NetworkManager.Singleton.ConnectedClientsList.Count >= requiredPlayers);
+        yield return new WaitUntil(() => NetworkManager.Singleton != null && NetworkManager.Singleton.ConnectedClientsList.Count >= requiredPlayers);
         yield return new WaitForSeconds(1f); // small buffer
 
         GameObject[] players = GameObject.FindGameObjectsWithTag("Player");
+
+        // Immediately move all players to a safe position so they don't fall
+        foreach (var p in players)
+        {
+            var pm = p.GetComponent<PlayerMovement>();
+            if (pm != null) pm.ResetPlayer(spawnSystem.pinkSpawn.position);
+        }
+
         StartCoroutine(StartRoundLoop(players));
     }
 

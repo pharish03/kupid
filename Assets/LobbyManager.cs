@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using Unity.Collections;
 using Unity.Netcode;
 using Unity.Services.Authentication;
 using Unity.Services.Core;
@@ -28,10 +29,12 @@ public class LobbyManager : MonoBehaviour
 
     [Header("Settings")]
     [SerializeField] private string gameSceneName = "SampleScene";
-    [SerializeField] private int maxPlayers = 4;
+    [SerializeField] private int maxPlayers = 2;
+    [SerializeField] private GameObject playerPrefab;
 
     private ISession currentSession;
     private bool isHost;
+    private GameObject canvasRoot;
 
     private async void Start()
     {
@@ -44,21 +47,73 @@ public class LobbyManager : MonoBehaviour
         waitingPanel.SetActive(false);
         lobbyPanel.SetActive(true);
 
+        canvasRoot = lobbyPanel.transform.root.gameObject;
+
+        // Always show cursor in lobby
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+
+        // Set scene verify callback and spawn hook when network starts
+        NetworkManager.Singleton.OnServerStarted += () =>
+        {
+            NetworkManager.Singleton.SceneManager.VerifySceneBeforeLoading = (__, ___, ____) => true;
+            NetworkManager.Singleton.SceneManager.OnLoadEventCompleted += OnLoadEventCompleted;
+        };
+        NetworkManager.Singleton.OnClientStarted += () =>
+        {
+            NetworkManager.Singleton.SceneManager.VerifySceneBeforeLoading = (__, ___, ____) => true;
+        };
+
+        SceneManager.sceneLoaded += OnSceneLoaded;
+
         await InitializeServices();
+    }
+
+    private void OnDestroy()
+    {
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        if (scene.name == gameSceneName)
+            HideLobbyUI();
+    }
+
+    // Fires on server only after ALL clients have loaded the scene
+    private void OnLoadEventCompleted(string sceneName, LoadSceneMode mode, System.Collections.Generic.List<ulong> clientsCompleted, System.Collections.Generic.List<ulong> clientsTimedOut)
+    {
+        if (sceneName != gameSceneName) return;
+        if (!isHost || playerPrefab == null) return;
+
+        // Find spawn points by name
+        GameObject pinkSpawn = GameObject.Find("PinkSpawn");
+        GameObject redSpawn = GameObject.Find("RedSpawn");
+
+        Vector3[] spawnPositions = new Vector3[]
+        {
+            pinkSpawn != null ? pinkSpawn.transform.position : new Vector3(0, 3, 0),
+            redSpawn != null ? redSpawn.transform.position : new Vector3(5, 3, 0)
+        };
+
+        var clients = NetworkManager.Singleton.ConnectedClientsList;
+        for (int i = 0; i < clients.Count; i++)
+        {
+            Vector3 pos = spawnPositions[i % spawnPositions.Length];
+            GameObject player = Instantiate(playerPrefab, pos, Quaternion.identity);
+            player.GetComponent<NetworkObject>().SpawnAsPlayerObject(clients[i].ClientId, true);
+        }
     }
 
     private async Task InitializeServices()
     {
         SetStatus("Connecting...");
         SetButtonsInteractable(false);
-
         try
         {
             await UnityServices.InitializeAsync();
-
             if (!AuthenticationService.Instance.IsSignedIn)
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
-
             SetStatus("Ready — Host or enter a code to join");
             SetButtonsInteractable(true);
         }
@@ -73,11 +128,17 @@ public class LobbyManager : MonoBehaviour
     {
         SetStatus("Creating session...");
         SetButtonsInteractable(false);
-
         try
         {
             var options = new SessionOptions { MaxPlayers = maxPlayers }.WithRelayNetwork();
             currentSession = await MultiplayerService.Instance.CreateSessionAsync(options);
+
+            // Register handler so host also responds to the load message
+            NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler("LoadGameScene", (_, _) =>
+            {
+                HideLobbyUI();
+                SceneManager.LoadScene(gameSceneName, LoadSceneMode.Single);
+            });
 
             isHost = true;
             ShowWaitingPanel();
@@ -105,13 +166,18 @@ public class LobbyManager : MonoBehaviour
             SetStatus("Enter a code first.");
             return;
         }
-
         SetStatus("Joining...");
         SetButtonsInteractable(false);
-
         try
         {
             currentSession = await MultiplayerService.Instance.JoinSessionByCodeAsync(code);
+
+            // Register handler so client loads scene when host sends message
+            NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler("LoadGameScene", (_, _) =>
+            {
+                HideLobbyUI();
+                SceneManager.LoadScene(gameSceneName, LoadSceneMode.Single);
+            });
 
             isHost = false;
             ShowWaitingPanel();
@@ -133,7 +199,14 @@ public class LobbyManager : MonoBehaviour
     private void StartGame()
     {
         if (!isHost) return;
+        HideLobbyUI();
         NetworkManager.Singleton.SceneManager.LoadScene(gameSceneName, LoadSceneMode.Single);
+    }
+
+    private void HideLobbyUI()
+    {
+        if (canvasRoot != null)
+            canvasRoot.SetActive(false);
     }
 
     private async Task LeaveGame()
@@ -151,7 +224,9 @@ public class LobbyManager : MonoBehaviour
             Debug.LogError($"Error leaving: {e.Message}");
         }
 
+        NetworkManager.Singleton?.Shutdown();
         isHost = false;
+        if (canvasRoot != null) canvasRoot.SetActive(true);
         lobbyPanel.SetActive(true);
         waitingPanel.SetActive(false);
         startButton.gameObject.SetActive(false);
@@ -164,7 +239,6 @@ public class LobbyManager : MonoBehaviour
         if (playerCountText == null || currentSession == null) return;
         int count = currentSession.Players.Count;
         playerCountText.text = $"Players: {count} / {currentSession.MaxPlayers}";
-
         if (isHost && startButton != null)
             startButton.interactable = count >= maxPlayers;
     }
