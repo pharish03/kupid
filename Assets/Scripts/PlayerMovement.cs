@@ -150,8 +150,6 @@ public class PlayerMovement : NetworkBehaviour
             return;
         }
 
-        velocity = Vector3.zero; // clear any velocity left over from settle
-
         isGrounded = controller.isGrounded;
 
         Vector2 input = moveAction.ReadValue<Vector2>();
