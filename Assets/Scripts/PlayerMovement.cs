@@ -46,6 +46,7 @@ public class PlayerMovement : NetworkBehaviour
 
     private Vector3 velocity;
     private bool isGrounded;
+    private float spawnSettleTimer = 0f;
 
     private float coyoteTimer = 0f;
     private float jumpBufferTimer = 0f;
@@ -62,16 +63,20 @@ public class PlayerMovement : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        // Only enable input and camera for the local owner
+        velocity = Vector3.zero;
+        spawnSettleTimer = 2f;
+        if (controller != null) controller.enabled = false;
+        transform.position = transform.position; // flush position
+        if (controller != null) controller.enabled = true;
+
         if (!IsOwner)
         {
-            // Disable camera for non-owners so they don't see through another player's eyes
             if (cameraRoot != null)
             {
                 Camera cam = cameraRoot.GetComponentInChildren<Camera>();
                 if (cam != null) cam.gameObject.SetActive(false);
             }
-            enabled = false; // Disable this script entirely for non-owners
+            enabled = false;
             return;
         }
 
@@ -128,9 +133,32 @@ public class PlayerMovement : NetworkBehaviour
         // Only the owner runs movement
         if (!IsOwner || IsDead) return;
 
+        // During spawn settle: fall straight down until grounded, then lock in place
+        if (spawnSettleTimer > 0f)
+        {
+            spawnSettleTimer -= Time.deltaTime;
+            // Fall purely vertical — no horizontal component
+            velocity.y = Mathf.Min(velocity.y + gravity * Time.deltaTime, 0f);
+            controller.Move(new Vector3(0f, velocity.y * Time.deltaTime, 0f));
+            if (controller.isGrounded)
+            {
+                velocity = Vector3.zero;
+                spawnSettleTimer = 0f; // grounded — stop settling immediately
+            }
+            HandleCrouchSizing(false);
+            HandleCameraCrouch();
+            return;
+        }
+
+        velocity = Vector3.zero; // clear any velocity left over from settle
+
         isGrounded = controller.isGrounded;
 
         Vector2 input = moveAction.ReadValue<Vector2>();
+
+        // Deadzone to prevent drift from slight input values
+        if (input.magnitude < 0.1f) input = Vector2.zero;
+
         float x = input.x;
         float z = input.y;
 
@@ -163,7 +191,14 @@ public class PlayerMovement : NetworkBehaviour
 
         float airControl = isGrounded ? 1f : airControlMultiplier;
         Vector3 finalMove = moveDirWorld * (speed * speedMultiplier * currentSpeedMultiplier * airControl);
-        controller.Move(finalMove * Time.deltaTime);
+
+        // Only move if there's actual input
+        if (input.magnitude > 0.01f)
+            controller.Move(finalMove * Time.deltaTime);
+
+        // Use -2f when grounded to stick to ground without slope-sliding
+        if (isGrounded && velocity.y < 0f)
+            velocity.y = -2f;
 
         float effectiveGravity = gravity;
         if (state == MoveState.Gliding && !isGrounded)
@@ -174,7 +209,7 @@ public class PlayerMovement : NetworkBehaviour
         }
 
         velocity.y += effectiveGravity * Time.deltaTime;
-        controller.Move(velocity * Time.deltaTime);
+        controller.Move(Vector3.up * velocity.y * Time.deltaTime);
 
         isGrounded = controller.isGrounded;
 
@@ -191,9 +226,6 @@ public class PlayerMovement : NetworkBehaviour
             state = MoveState.Normal;
             isGrounded = false;
         }
-
-        if (isGrounded && velocity.y < 0f)
-            velocity.y = 0f;
     }
 
     // Called by server only via Arrow hit
@@ -230,8 +262,11 @@ public class PlayerMovement : NetworkBehaviour
     [ClientRpc]
     private void TeleportClientRpc(Vector3 spawnPosition)
     {
+        velocity = Vector3.zero;
+        spawnSettleTimer = 2f;
         controller.enabled = false;
         transform.position = spawnPosition;
+        Physics.SyncTransforms();
         controller.enabled = true;
 
         // Re-enable visuals

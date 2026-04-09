@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Unity.Collections;
 using Unity.Netcode;
@@ -49,60 +51,12 @@ public class LobbyManager : MonoBehaviour
 
         canvasRoot = lobbyPanel.transform.root.gameObject;
 
-        // Always show cursor in lobby
+        DontDestroyOnLoad(gameObject);
+
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
 
-        // Set scene verify callback and spawn hook when network starts
-        NetworkManager.Singleton.OnServerStarted += () =>
-        {
-            NetworkManager.Singleton.SceneManager.VerifySceneBeforeLoading = (__, ___, ____) => true;
-            NetworkManager.Singleton.SceneManager.OnLoadEventCompleted += OnLoadEventCompleted;
-        };
-        NetworkManager.Singleton.OnClientStarted += () =>
-        {
-            NetworkManager.Singleton.SceneManager.VerifySceneBeforeLoading = (__, ___, ____) => true;
-        };
-
-        SceneManager.sceneLoaded += OnSceneLoaded;
-
         await InitializeServices();
-    }
-
-    private void OnDestroy()
-    {
-        SceneManager.sceneLoaded -= OnSceneLoaded;
-    }
-
-    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
-    {
-        if (scene.name == gameSceneName)
-            HideLobbyUI();
-    }
-
-    // Fires on server only after ALL clients have loaded the scene
-    private void OnLoadEventCompleted(string sceneName, LoadSceneMode mode, System.Collections.Generic.List<ulong> clientsCompleted, System.Collections.Generic.List<ulong> clientsTimedOut)
-    {
-        if (sceneName != gameSceneName) return;
-        if (!isHost || playerPrefab == null) return;
-
-        // Find spawn points by name
-        GameObject pinkSpawn = GameObject.Find("PinkSpawn");
-        GameObject redSpawn = GameObject.Find("RedSpawn");
-
-        Vector3[] spawnPositions = new Vector3[]
-        {
-            pinkSpawn != null ? pinkSpawn.transform.position : new Vector3(0, 3, 0),
-            redSpawn != null ? redSpawn.transform.position : new Vector3(5, 3, 0)
-        };
-
-        var clients = NetworkManager.Singleton.ConnectedClientsList;
-        for (int i = 0; i < clients.Count; i++)
-        {
-            Vector3 pos = spawnPositions[i % spawnPositions.Length];
-            GameObject player = Instantiate(playerPrefab, pos, Quaternion.identity);
-            player.GetComponent<NetworkObject>().SpawnAsPlayerObject(clients[i].ClientId, true);
-        }
     }
 
     private async Task InitializeServices()
@@ -133,12 +87,9 @@ public class LobbyManager : MonoBehaviour
             var options = new SessionOptions { MaxPlayers = maxPlayers }.WithRelayNetwork();
             currentSession = await MultiplayerService.Instance.CreateSessionAsync(options);
 
-            // Register handler so host also responds to the load message
-            NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler("LoadGameScene", (_, _) =>
-            {
-                HideLobbyUI();
-                SceneManager.LoadScene(gameSceneName, LoadSceneMode.Single);
-            });
+            // Register message handler — when host sends LoadGame, everyone (including host) loads
+            NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(
+                "LoadGame", OnLoadGameMessage);
 
             isHost = true;
             ShowWaitingPanel();
@@ -170,14 +121,21 @@ public class LobbyManager : MonoBehaviour
         SetButtonsInteractable(false);
         try
         {
+            // Ensure NetworkManager is clean before joining
+            if (NetworkManager.Singleton.IsListening)
+                NetworkManager.Singleton.Shutdown();
+
+            await System.Threading.Tasks.Task.Delay(500); // wait for shutdown
+
             currentSession = await MultiplayerService.Instance.JoinSessionByCodeAsync(code);
 
-            // Register handler so client loads scene when host sends message
-            NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler("LoadGameScene", (_, _) =>
-            {
-                HideLobbyUI();
-                SceneManager.LoadScene(gameSceneName, LoadSceneMode.Single);
-            });
+            // Register message handler — client will load scene when host says so
+            NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(
+                "LoadGame", OnLoadGameMessage);
+
+            // Register spawn handler — host tells client to spawn at a position
+            NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(
+                "SpawnPlayer", OnSpawnPlayerMessage);
 
             isHost = false;
             ShowWaitingPanel();
@@ -196,11 +154,74 @@ public class LobbyManager : MonoBehaviour
         }
     }
 
+    private void OnLoadGameMessage(ulong senderId, FastBufferReader reader)
+    {
+        HideLobbyUI();
+        SceneManager.LoadScene(gameSceneName, LoadSceneMode.Single);
+
+        if (isHost)
+            StartCoroutine(SpawnPlayersAfterLoad());
+    }
+
+    private IEnumerator SpawnPlayersAfterLoad()
+    {
+        // Wait for scene to fully load
+        yield return new WaitForSeconds(1.5f);
+
+        GameObject pinkSpawnObj = GameObject.Find("PinkSpawn");
+        GameObject redSpawnObj = GameObject.Find("RedSpawn");
+
+        Vector3 pinkBase = pinkSpawnObj != null ? pinkSpawnObj.transform.position : new Vector3(0, 10, 0);
+        Vector3 redBase  = redSpawnObj  != null ? redSpawnObj.transform.position  : new Vector3(5, 10, 0);
+
+        Vector3[] spawnPos = new Vector3[]
+        {
+            SnapToGround(pinkBase),
+            SnapToGround(redBase)
+        };
+
+        var clients = new List<ulong>(NetworkManager.Singleton.ConnectedClientsIds);
+        for (int i = 0; i < clients.Count; i++)
+        {
+            Vector3 pos = spawnPos[i % spawnPos.Length];
+            GameObject player = Instantiate(playerPrefab, pos, Quaternion.identity);
+            player.GetComponent<NetworkObject>().SpawnAsPlayerObject(clients[i], true);
+        }
+    }
+
+    // Raycast down from a spawn marker to place the player exactly on the ground surface
+    private Vector3 SnapToGround(Vector3 from)
+    {
+        // Cast from well above the marker downward
+        Vector3 rayOrigin = new Vector3(from.x, from.y + 5f, from.z);
+        if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, 30f))
+        {
+            // Offset up by half the capsule height (1 unit) so the player stands on the surface
+            return hit.point + Vector3.up * 1.1f;
+        }
+        // No ground found — use the marker position as-is
+        Debug.LogWarning($"SnapToGround: no ground found below {from}, using raw position");
+        return from;
+    }
+
+    private void OnSpawnPlayerMessage(ulong senderId, FastBufferReader reader)
+    {
+        // Clients don't need to do anything — NGO handles replication
+    }
+
     private void StartGame()
     {
         if (!isHost) return;
+
+        // Send load message to all clients
+        var writer = new FastBufferWriter(0, Allocator.Temp);
+        NetworkManager.Singleton.CustomMessagingManager.SendNamedMessageToAll("LoadGame", writer);
+        writer.Dispose();
+
+        // Host loads too
         HideLobbyUI();
-        NetworkManager.Singleton.SceneManager.LoadScene(gameSceneName, LoadSceneMode.Single);
+        SceneManager.LoadScene(gameSceneName, LoadSceneMode.Single);
+        StartCoroutine(SpawnPlayersAfterLoad());
     }
 
     private void HideLobbyUI()

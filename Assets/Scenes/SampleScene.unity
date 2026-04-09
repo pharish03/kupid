@@ -6854,17 +6854,21 @@ PrefabInstance:
       propertyPath: m_Name
       value: PinkSpawn
       objectReference: {fileID: 0}
+    - target: {fileID: 3324904581532682038, guid: 39d74fe2ec8069f4bbb17bfcc2c02045, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 5637582927843652946, guid: 39d74fe2ec8069f4bbb17bfcc2c02045, type: 3}
       propertyPath: m_LocalPosition.x
-      value: -74.65862
+      value: -73.66
       objectReference: {fileID: 0}
     - target: {fileID: 5637582927843652946, guid: 39d74fe2ec8069f4bbb17bfcc2c02045, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 3.0116186
+      value: 3.012
       objectReference: {fileID: 0}
     - target: {fileID: 5637582927843652946, guid: 39d74fe2ec8069f4bbb17bfcc2c02045, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 32.584084
+      value: 33.53
       objectReference: {fileID: 0}
     - target: {fileID: 5637582927843652946, guid: 39d74fe2ec8069f4bbb17bfcc2c02045, type: 3}
       propertyPath: m_LocalRotation.w
@@ -6894,7 +6898,8 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    m_RemovedComponents: []
+    m_RemovedComponents:
+    - {fileID: 3324904581532682038, guid: 39d74fe2ec8069f4bbb17bfcc2c02045, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents: []
@@ -7629,7 +7634,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8765364277374806208, guid: add40385c76f7754abbfa763e9c14521, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 3.011619
+      value: 2.563
       objectReference: {fileID: 0}
     - target: {fileID: 8765364277374806208, guid: add40385c76f7754abbfa763e9c14521, type: 3}
       propertyPath: m_LocalPosition.z
@@ -7663,7 +7668,12 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    m_RemovedComponents: []
+    - target: {fileID: 8923075360650164418, guid: add40385c76f7754abbfa763e9c14521, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents:
+    - {fileID: 8923075360650164418, guid: add40385c76f7754abbfa763e9c14521, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents: []
