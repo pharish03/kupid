@@ -6,6 +6,7 @@ public class PlayerPowerUps : MonoBehaviour
 
     private int ActiveAbility = 0;
     public PlayerMovement playerMovement;
+    public GameObject shield;
 
     private void OnTriggerEnter(Collider other)
     {
@@ -45,7 +46,8 @@ public class PlayerPowerUps : MonoBehaviour
             else if (ActiveAbility == 2) // Shield
             {
                 Debug.Log("Using Shield PowerUp!");
-                // Implement shield logic here
+                StartCoroutine(ActivateShield());
+                ActiveAbility = 0;
             }
             else if (ActiveAbility == 3) // AWESOME AF GRAPPLE HOOK
             {
@@ -60,5 +62,11 @@ public class PlayerPowerUps : MonoBehaviour
         playerMovement.speed *= 2f; 
         yield return new WaitForSeconds(7f); // Duration of the speed boost
         playerMovement.speed /= 2f; 
+    }
+    private IEnumerator ActivateShield()
+    {
+        shield.SetActive(true); // Activate the shield
+        yield return new WaitForSeconds(20f); // Duration of the shield
+        shield.SetActive(false); // Deactivate the shield
     }
 }
