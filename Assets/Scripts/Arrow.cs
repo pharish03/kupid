@@ -1,35 +1,62 @@
 using UnityEngine;
 using Unity.Netcode;
 
-// Attach to Arrow prefab alongside NetworkObject component
 [RequireComponent(typeof(Rigidbody))]
 public class Arrow : NetworkBehaviour
 {
+    [Header("Damage")]
     public int damage = 25;
-    public ulong shooterOwnerId;
 
-    // Set this on spawn to prevent friendly fire
-    public bool shooterIsPink = false;
+    [Header("Bounce Settings")]
+    [Tooltip("Max number of bounces before sticking (Sova = 1)")]
+    public int maxBounces = 1;
+    [Tooltip("Speed multiplier after each bounce. 0.85 keeps it fast like Sova.")]
+    [Range(0.5f, 1f)]
+    public float bounceSpeedRetention = 0.85f;
 
     [Header("Flight")]
-    public float rotationSpeed = 15f; // How fast arrow rotates to match velocity direction
+    public bool alignToVelocity = true;
 
-    private bool hasHit = false;
-    private bool hasBounced = false;
+    [Header("Lifetime")]
+    public float maxLifetime = 8f;
+    public float stickDestroyDelay = 4f;
+
+    // Set by the shooter script on spawn
+    [HideInInspector] public ulong shooterOwnerId;
+    [HideInInspector] public bool shooterIsPink = false;
+
     private Rigidbody rb;
+    private int bounceCount = 0;
+    private bool hasHit = false;
+    private float aliveTimer = 0f;
 
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        base.OnNetworkSpawn();
+        aliveTimer = 0f;
     }
 
     void Update()
     {
-        // Rotate arrow to face its velocity direction (gives realistic arc look)
-        if (!hasHit && rb != null && rb.linearVelocity.sqrMagnitude > 0.5f)
+        if (alignToVelocity && !hasHit && rb.linearVelocity.sqrMagnitude > 1f)
         {
-            Quaternion targetRot = Quaternion.LookRotation(rb.linearVelocity);
-            transform.rotation = Quaternion.Lerp(transform.rotation, targetRot, Time.deltaTime * rotationSpeed);
+            transform.rotation = Quaternion.LookRotation(rb.linearVelocity.normalized);
+        }
+
+        if (IsServer)
+        {
+            aliveTimer += Time.deltaTime;
+            if (aliveTimer >= maxLifetime)
+            {
+                DespawnArrow();
+            }
         }
     }
 
@@ -37,60 +64,50 @@ public class Arrow : NetworkBehaviour
     {
         if (!IsServer || hasHit) return;
 
+        // --- Player hit ---
         PlayerMovement player = collision.gameObject.GetComponent<PlayerMovement>();
-
         if (player != null)
         {
-            // Don't hit shooter
             if (player.OwnerClientId == shooterOwnerId) return;
 
-            // Friendly fire prevention — check team tags
             bool targetIsPink = collision.gameObject.CompareTag("PinkTeam");
             if (targetIsPink == shooterIsPink) return;
 
             hasHit = true;
             player.TakeDamageServerRpc(damage);
+            DespawnArrow();
+            return;
+        }
 
-            if (NetworkObject != null && NetworkObject.IsSpawned)
-                NetworkObject.Despawn();
+        // --- Environment hit ---
+        if (bounceCount < maxBounces)
+        {
+            // Manual bounce using reflection
+            Vector3 incomingVel = rb.linearVelocity;
+            Vector3 surfaceNormal = collision.contacts[0].normal;
+            Vector3 reflectedVel = Vector3.Reflect(incomingVel, surfaceNormal);
+            reflectedVel *= bounceSpeedRetention;
+
+            rb.linearVelocity = reflectedVel;
+            bounceCount++;
         }
         else
         {
-            // Hit environment — bounce once, then stick on second hit
-            if (!hasBounced)
-            {
-                hasBounced = true;
-                // Velocity reflection is handled by the Rigidbody's Physics Material
-                // We just reduce speed after the bounce
-                BounceClientRpc();
-            }
-            else
-            {
-                // Already bounced once — now stick
-                hasHit = true;
-                StickToSurfaceClientRpc();
-            }
-        }
-    }
-
-    [ClientRpc]
-    private void BounceClientRpc()
-    {
-        if (rb != null)
-        {
-            // Reduce speed by half after bounce
-            rb.linearVelocity *= 0.5f;
-        }
-    }
-
-    [ClientRpc]
-    private void StickToSurfaceClientRpc()
-    {
-        if (rb != null)
-        {
+            // Out of bounces — stick
+            hasHit = true;
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
             rb.isKinematic = true;
+
+            Invoke(nameof(DespawnArrow), stickDestroyDelay);
+        }
+    }
+
+    private void DespawnArrow()
+    {
+        if (NetworkObject != null && NetworkObject.IsSpawned)
+        {
+            NetworkObject.Despawn();
         }
     }
 }

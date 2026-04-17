@@ -46,6 +46,7 @@ public class PlayerMovement : NetworkBehaviour
 
     private Vector3 velocity;
     private bool isGrounded;
+    private bool isTeleporting;
 
     private float coyoteTimer = 0f;
     private float jumpBufferTimer = 0f;
@@ -62,16 +63,14 @@ public class PlayerMovement : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        // Only enable input and camera for the local owner
         if (!IsOwner)
         {
-            // Disable camera for non-owners so they don't see through another player's eyes
             if (cameraRoot != null)
             {
                 Camera cam = cameraRoot.GetComponentInChildren<Camera>();
                 if (cam != null) cam.gameObject.SetActive(false);
             }
-            enabled = false; // Disable this script entirely for non-owners
+            enabled = false;
             return;
         }
 
@@ -80,7 +79,6 @@ public class PlayerMovement : NetworkBehaviour
 
     private void InitInput()
     {
-        // controller already set in Awake
         moveAction = new InputAction("Move", InputActionType.Value);
         var composite = moveAction.AddCompositeBinding("2DVector");
         composite.With("Up", "<Keyboard>/w");
@@ -121,8 +119,8 @@ public class PlayerMovement : NetworkBehaviour
 
     void Update()
     {
-        // Only the owner runs movement
-        if (!IsOwner || IsDead) return;
+        if (!IsOwner || IsDead || isTeleporting) return;
+        if (!ControllerReady()) return;
 
         isGrounded = controller.isGrounded;
 
@@ -159,7 +157,7 @@ public class PlayerMovement : NetworkBehaviour
 
         float airControl = isGrounded ? 1f : airControlMultiplier;
         Vector3 finalMove = moveDirWorld * (speed * speedMultiplier * currentSpeedMultiplier * airControl);
-        controller.Move(finalMove * Time.deltaTime);
+        SafeMove(finalMove * Time.deltaTime);
 
         float effectiveGravity = gravity;
         if (state == MoveState.Gliding && !isGrounded)
@@ -170,9 +168,10 @@ public class PlayerMovement : NetworkBehaviour
         }
 
         velocity.y += effectiveGravity * Time.deltaTime;
-        controller.Move(velocity * Time.deltaTime);
+        SafeMove(velocity * Time.deltaTime);
 
-        isGrounded = controller.isGrounded;
+        if (ControllerReady())
+            isGrounded = controller.isGrounded;
 
         if (isGrounded)
             coyoteTimer = coyoteTime;
@@ -192,12 +191,23 @@ public class PlayerMovement : NetworkBehaviour
             velocity.y = 0f;
     }
 
-    // Called by server only via Arrow hit
+    private bool ControllerReady()
+    {
+        return controller != null && controller.enabled && gameObject.activeInHierarchy;
+    }
+
+    private void SafeMove(Vector3 motion)
+    {
+        if (!ControllerReady()) return;
+        controller.Move(motion);
+    }
+
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
     public void TakeDamageServerRpc(int damage)
     {
         if (IsDead) return;
         currentHealth.Value = Mathf.Max(0, currentHealth.Value - damage);
+        Debug.Log($"Player took {damage} damage. Health: {currentHealth.Value}");
         if (IsDead)
         {
             DieClientRpc();
@@ -207,15 +217,13 @@ public class PlayerMovement : NetworkBehaviour
     [ClientRpc]
     private void DieClientRpc()
     {
-        // Disable visuals and collider — don't SetActive(false) on a NetworkObject
         foreach (var r in GetComponentsInChildren<Renderer>()) r.enabled = false;
-        controller.enabled = false;
+        if (controller != null) controller.enabled = false;
         moveAction?.Disable();
         jumpAction?.Disable();
         shiftAction?.Disable();
     }
 
-    // Only call from server
     public void ResetPlayer(Vector3 spawnPosition)
     {
         if (!IsServer) return;
@@ -226,24 +234,29 @@ public class PlayerMovement : NetworkBehaviour
     [ClientRpc]
     private void TeleportClientRpc(Vector3 spawnPosition)
     {
-        controller.enabled = false;
-        transform.position = spawnPosition;
-        controller.enabled = true;
+        isTeleporting = true;
+        velocity = Vector3.zero;
 
-        // Re-enable visuals
+        if (controller != null) controller.enabled = false;
+        transform.position = spawnPosition;
+        if (controller != null) controller.enabled = true;
+
         foreach (var r in GetComponentsInChildren<Renderer>()) r.enabled = true;
 
-        // Re-enable input for owner
         if (IsOwner)
         {
             moveAction?.Enable();
             jumpAction?.Enable();
             shiftAction?.Enable();
         }
+
+        isTeleporting = false;
     }
 
     private void HandleCrouchSizing(bool shiftReleased)
     {
+        if (!ControllerReady()) return;
+
         float targetHeight = (state == MoveState.Crouching) ? crouchHeight : standingHeight;
 
         if (state == MoveState.Normal && shiftReleased)
@@ -264,6 +277,8 @@ public class PlayerMovement : NetworkBehaviour
     private void HandleCameraCrouch()
     {
         if (cameraRoot == null) return;
+        if (!ControllerReady()) return;
+
         float heightDelta = standingHeight - controller.height;
         float targetY = standingCameraLocalY - heightDelta - crouchCameraExtraDrop;
         Vector3 local = cameraRoot.localPosition;
