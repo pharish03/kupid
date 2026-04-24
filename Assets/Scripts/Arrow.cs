@@ -1,96 +1,126 @@
 using UnityEngine;
 using Unity.Netcode;
 
-// Attach to Arrow prefab alongside NetworkObject component
 [RequireComponent(typeof(Rigidbody))]
 public class Arrow : NetworkBehaviour
 {
+    [Header("Damage")]
     public int damage = 25;
-    public ulong shooterOwnerId;
 
-    // Set this on spawn to prevent friendly fire
-    public bool shooterIsPink = false;
+    [Header("Bounce Settings")]
+    [Tooltip("Max number of bounces before sticking")]
+    public int maxBounces = 1;
+    [Tooltip("Speed multiplier after each bounce.")]
+    [Range(0.5f, 1f)]
+    public float bounceSpeedRetention = 0.85f;
 
     [Header("Flight")]
-    public float rotationSpeed = 15f; // How fast arrow rotates to match velocity direction
+    [Tooltip("If true, arrow aligns to velocity every frame for a realistic arc.")]
+    public bool alignToVelocity = true;
 
-    private bool hasHit = false;
-    private bool hasBounced = false;
+    [Header("Lifetime")]
+    public float maxLifetime = 8f;
+    public float stickDestroyDelay = 4f;
+
+    // Set by the shooter script on spawn
+    [HideInInspector] public ulong shooterOwnerId;
+    [HideInInspector] public bool shooterIsPink = false;
+
     private Rigidbody rb;
+    private int bounceCount = 0;
+    private bool hasHit = false;
+    private float aliveTimer = 0f;
 
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
+
+        // Critical for fast projectiles — prevents tunneling through walls
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        base.OnNetworkSpawn();
+        aliveTimer = 0f;
     }
 
     void Update()
     {
-        // Rotate arrow to face its velocity direction (gives realistic arc look)
-        if (!hasHit && rb != null && rb.linearVelocity.sqrMagnitude > 0.5f)
+        // Align the arrow model to face its velocity direction
+        if (alignToVelocity && !hasHit && rb.linearVelocity.sqrMagnitude > 1f)
         {
-            Quaternion targetRot = Quaternion.LookRotation(rb.linearVelocity);
-            transform.rotation = Quaternion.Lerp(transform.rotation, targetRot, Time.deltaTime * rotationSpeed);
+            transform.rotation = Quaternion.LookRotation(rb.linearVelocity.normalized);
+        }
+
+        // Safety despawn so stray arrows don't live forever
+        if (IsServer)
+        {
+            aliveTimer += Time.deltaTime;
+            if (aliveTimer >= maxLifetime)
+            {
+                DespawnArrow();
+            }
         }
     }
 
     void OnCollisionEnter(Collision collision)
     {
+        // Only the server decides what happens on hit
         if (!IsServer || hasHit) return;
 
+        // --- Player hit ---
         PlayerMovement player = collision.gameObject.GetComponent<PlayerMovement>();
-
         if (player != null)
         {
-            // Don't hit shooter
+            // Ignore the shooter
             if (player.OwnerClientId == shooterOwnerId) return;
 
-            // Friendly fire prevention — check team tags
+            // Friendly fire check
             bool targetIsPink = collision.gameObject.CompareTag("PinkTeam");
             if (targetIsPink == shooterIsPink) return;
 
             hasHit = true;
             player.TakeDamageServerRpc(damage);
+            DespawnArrow();
+            return;
+        }
 
-            if (NetworkObject != null && NetworkObject.IsSpawned)
-                NetworkObject.Despawn();
+        // --- Environment hit ---
+        if (bounceCount < maxBounces)
+        {
+            // Manual bounce: reflect velocity off the surface normal
+            Vector3 incomingVel = rb.linearVelocity;
+            Vector3 surfaceNormal = collision.contacts[0].normal;
+
+            Vector3 reflectedVel = Vector3.Reflect(incomingVel, surfaceNormal);
+            reflectedVel *= bounceSpeedRetention;
+
+            rb.linearVelocity = reflectedVel;
+
+            bounceCount++;
         }
         else
         {
-            // Hit environment — bounce once, then stick on second hit
-            if (!hasBounced)
-            {
-                hasBounced = true;
-                // Velocity reflection is handled by the Rigidbody's Physics Material
-                // We just reduce speed after the bounce
-                BounceClientRpc();
-            }
-            else
-            {
-                // Already bounced once — now stick
-                hasHit = true;
-                StickToSurfaceClientRpc();
-            }
-        }
-    }
-
-    [ClientRpc]
-    private void BounceClientRpc()
-    {
-        if (rb != null)
-        {
-            // Reduce speed by half after bounce
-            rb.linearVelocity *= 0.5f;
-        }
-    }
-
-    [ClientRpc]
-    private void StickToSurfaceClientRpc()
-    {
-        if (rb != null)
-        {
+            // Out of bounces — stick to the surface
+            hasHit = true;
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
             rb.isKinematic = true;
+
+            // NetworkRigidbody syncs this to all clients automatically,
+            // so no ClientRpc needed
+
+            Invoke(nameof(DespawnArrow), stickDestroyDelay);
+        }
+    }
+
+    private void DespawnArrow()
+    {
+        if (NetworkObject != null && NetworkObject.IsSpawned)
+        {
+            NetworkObject.Despawn();
         }
     }
 }

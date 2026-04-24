@@ -47,13 +47,10 @@ public class PlayerMovement : NetworkBehaviour
     private Vector3 velocity;
     private bool isGrounded;
     private float spawnSettleTimer = 0f;
+    private bool inputEnabled = false;
 
     private float coyoteTimer = 0f;
     private float jumpBufferTimer = 0f;
-
-    private InputAction moveAction;
-    private InputAction jumpAction;
-    private InputAction shiftAction;
 
     private enum MoveState { Normal, Crouching, Gliding }
     private MoveState state = MoveState.Normal;
@@ -64,7 +61,7 @@ public class PlayerMovement : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         velocity = Vector3.zero;
-        spawnSettleTimer = 2f;
+        spawnSettleTimer = 0.1f;
         if (controller != null) controller.enabled = false;
         transform.position = transform.position; // flush position
         if (controller != null) controller.enabled = true;
@@ -75,6 +72,8 @@ public class PlayerMovement : NetworkBehaviour
             {
                 Camera cam = cameraRoot.GetComponentInChildren<Camera>();
                 if (cam != null) cam.gameObject.SetActive(false);
+                AudioListener al = cameraRoot.GetComponentInChildren<AudioListener>(true);
+                if (al != null) al.enabled = false;
             }
             enabled = false;
             return;
@@ -84,29 +83,7 @@ public class PlayerMovement : NetworkBehaviour
         foreach (var r in GetComponentsInChildren<Renderer>())
             r.enabled = false;
 
-        InitInput();
-    }
-
-    private void InitInput()
-    {
-        // controller already set in Awake
-        moveAction = new InputAction("Move", InputActionType.Value);
-        var composite = moveAction.AddCompositeBinding("2DVector");
-        composite.With("Up", "<Keyboard>/w");
-        composite.With("Down", "<Keyboard>/s");
-        composite.With("Left", "<Keyboard>/a");
-        composite.With("Right", "<Keyboard>/d");
-
-        jumpAction = new InputAction("Jump", InputActionType.Button);
-        jumpAction.AddBinding("<Keyboard>/space");
-
-        shiftAction = new InputAction("Crouch/Glide", InputActionType.Button);
-        shiftAction.AddBinding("<Keyboard>/leftShift");
-        shiftAction.AddBinding("<Keyboard>/rightShift");
-
-        moveAction.Enable();
-        jumpAction.Enable();
-        shiftAction.Enable();
+        inputEnabled = true;
     }
 
     void Awake()
@@ -121,30 +98,15 @@ public class PlayerMovement : NetworkBehaviour
             standingCameraLocalY = cameraRoot.localPosition.y;
     }
 
-    void OnDisable()
-    {
-        moveAction?.Disable();
-        jumpAction?.Disable();
-        shiftAction?.Disable();
-    }
-
     void Update()
     {
         // Only the owner runs movement
         if (!IsOwner || IsDead) return;
 
-        // During spawn settle: fall straight down until grounded, then lock in place
+        // Brief freeze after spawn so CharacterController initialises on the ground
         if (spawnSettleTimer > 0f)
         {
             spawnSettleTimer -= Time.deltaTime;
-            // Fall purely vertical — no horizontal component
-            velocity.y = Mathf.Min(velocity.y + gravity * Time.deltaTime, 0f);
-            controller.Move(new Vector3(0f, velocity.y * Time.deltaTime, 0f));
-            if (controller.isGrounded)
-            {
-                velocity = Vector3.zero;
-                spawnSettleTimer = 0f; // grounded — stop settling immediately
-            }
             HandleCrouchSizing(false);
             HandleCameraCrouch();
             return;
@@ -152,9 +114,25 @@ public class PlayerMovement : NetworkBehaviour
 
         isGrounded = controller.isGrounded;
 
-        Vector2 input = moveAction.ReadValue<Vector2>();
+        // Read input directly from keyboard (works in both MPPM and real multiplayer)
+        Vector2 input = Vector2.zero;
+        bool jumpPressed = false;
+        bool shiftHeld = false;
+        bool shiftReleased = false;
 
-        // Deadzone to prevent drift from slight input values
+        if (inputEnabled && Keyboard.current != null)
+        {
+            if (Keyboard.current.wKey.isPressed) input.y += 1f;
+            if (Keyboard.current.sKey.isPressed) input.y -= 1f;
+            if (Keyboard.current.aKey.isPressed) input.x -= 1f;
+            if (Keyboard.current.dKey.isPressed) input.x += 1f;
+
+            jumpPressed = Keyboard.current.spaceKey.wasPressedThisFrame;
+            shiftHeld = Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed;
+            shiftReleased = Keyboard.current.leftShiftKey.wasReleasedThisFrame || Keyboard.current.rightShiftKey.wasReleasedThisFrame;
+        }
+
+        // Deadzone to prevent drift
         if (input.magnitude < 0.1f) input = Vector2.zero;
 
         float x = input.x;
@@ -162,10 +140,7 @@ public class PlayerMovement : NetworkBehaviour
 
         Vector3 moveDirWorld = (transform.right * x + transform.forward * z);
 
-        bool shiftHeld = shiftAction.IsPressed();
-        bool shiftReleased = shiftAction.WasReleasedThisFrame();
-
-        if (jumpAction.WasPressedThisFrame())
+        if (jumpPressed)
             jumpBufferTimer = jumpBufferTime;
         else
             jumpBufferTimer -= Time.deltaTime;
@@ -190,11 +165,10 @@ public class PlayerMovement : NetworkBehaviour
         float airControl = isGrounded ? 1f : airControlMultiplier;
         Vector3 finalMove = moveDirWorld * (speed * speedMultiplier * currentSpeedMultiplier * airControl);
 
-        // Only move if there's actual input
         if (input.magnitude > 0.01f)
             controller.Move(finalMove * Time.deltaTime);
 
-        // Use -2f when grounded to stick to ground without slope-sliding
+        // Use -2f when grounded to prevent slope-sliding
         if (isGrounded && velocity.y < 0f)
             velocity.y = -2f;
 
@@ -241,12 +215,9 @@ public class PlayerMovement : NetworkBehaviour
     [ClientRpc]
     private void DieClientRpc()
     {
-        // Disable visuals and collider — don't SetActive(false) on a NetworkObject
         foreach (var r in GetComponentsInChildren<Renderer>()) r.enabled = false;
         controller.enabled = false;
-        moveAction?.Disable();
-        jumpAction?.Disable();
-        shiftAction?.Disable();
+        inputEnabled = false;
     }
 
     // Only call from server
@@ -261,7 +232,7 @@ public class PlayerMovement : NetworkBehaviour
     private void TeleportClientRpc(Vector3 spawnPosition)
     {
         velocity = Vector3.zero;
-        spawnSettleTimer = 2f;
+        spawnSettleTimer = 0.1f;
         controller.enabled = false;
         transform.position = spawnPosition;
         Physics.SyncTransforms();
@@ -270,13 +241,8 @@ public class PlayerMovement : NetworkBehaviour
         // Re-enable visuals
         foreach (var r in GetComponentsInChildren<Renderer>()) r.enabled = true;
 
-        // Re-enable input for owner
         if (IsOwner)
-        {
-            moveAction?.Enable();
-            jumpAction?.Enable();
-            shiftAction?.Enable();
-        }
+            inputEnabled = true;
     }
 
     private void HandleCrouchSizing(bool shiftReleased)

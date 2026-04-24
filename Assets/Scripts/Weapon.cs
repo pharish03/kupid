@@ -1,4 +1,3 @@
-using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using Unity.Netcode;
@@ -26,9 +25,6 @@ public class Weapon : NetworkBehaviour
     public float zoomFOV = 60f;
     public float zoomLerpSpeed = 12f;
 
-    [Header("Arrow Lifetime")]
-    public float arrowPrefabLifeTime = 3f;
-
     [Header("Damage")]
     public int minDamage = 10;
     public int maxDamage = 50;
@@ -48,23 +44,23 @@ public class Weapon : NetworkBehaviour
     {
         if (!IsOwner)
         {
-            enabled = false; // Only owner fires
+            enabled = false;
             return;
         }
 
         fireAction.Enable();
 
         if (playerCamera == null) playerCamera = Camera.main;
-        if (playerCamera != null) normalFOV = playerCamera.fieldOfView;
+        
     }
 
     void OnDisable() => fireAction?.Disable();
 
     void Update()
     {
-        if (!IsOwner) return;
-        if (playerCamera == null) return;
+        if (!IsOwner || playerCamera == null) return;
 
+        // Start charging
         if (fireAction.WasPressedThisFrame())
         {
             isCharging = true;
@@ -73,74 +69,84 @@ public class Weapon : NetworkBehaviour
                 playerMovement.speedMultiplier = moveSlowMultiplier;
         }
 
+        // Accumulate charge
         if (isCharging && fireAction.IsPressed())
         {
             charge01 += Time.deltaTime / Mathf.Max(0.01f, maxChargeTime);
             charge01 = Mathf.Clamp01(charge01);
         }
 
+        // Release — fire the arrow
         if (isCharging && fireAction.WasReleasedThisFrame())
         {
             bool isPink = gameObject.CompareTag("PinkTeam");
-            RequestFireArrowServerRpc(charge01, arrowSpawn.position, GetAimPoint(), isPink);
+            Vector3 aimPoint = GetAimPoint();
+            Vector3 spawnPos = arrowSpawn.position;
+            Vector3 dir = (aimPoint - spawnPos).normalized;
+
+            RequestFireArrowServerRpc(charge01, spawnPos, dir, isPink);
+
             isCharging = false;
             charge01 = 0f;
             if (playerMovement != null)
                 playerMovement.speedMultiplier = 1f;
         }
 
+        // Zoom FOV while charging
         float targetFov = isCharging ? zoomFOV : normalFOV;
-        playerCamera.fieldOfView = Mathf.Lerp(playerCamera.fieldOfView, targetFov, Time.deltaTime * zoomLerpSpeed);
+        playerCamera.fieldOfView = Mathf.Lerp(
+            playerCamera.fieldOfView, targetFov, Time.deltaTime * zoomLerpSpeed);
+
     }
 
     private Vector3 GetAimPoint()
     {
         Ray ray = playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-        if (Physics.Raycast(ray, out RaycastHit hit, aimMaxDistance, aimMask, QueryTriggerInteraction.Ignore))
+        if (Physics.Raycast(ray, out RaycastHit hit, aimMaxDistance, aimMask,
+                QueryTriggerInteraction.Ignore))
             return hit.point;
         return ray.origin + ray.direction * aimMaxDistance;
     }
 
-    // Server spawns the arrow so it's authoritative
     [ServerRpc]
-    private void RequestFireArrowServerRpc(float chargeAmount, Vector3 spawnPos, Vector3 aimPoint, bool isPink)
+    private void RequestFireArrowServerRpc(
+        float chargeAmount, Vector3 spawnPos, Vector3 direction, bool isPink)
     {
-        Vector3 dir = (aimPoint - spawnPos).normalized;
-        GameObject arrow = Instantiate(arrowPrefab, spawnPos, Quaternion.LookRotation(dir, Vector3.up));
+        GameObject arrow = Instantiate(
+            arrowPrefab, spawnPos, Quaternion.LookRotation(direction));
 
+        // Configure the arrow before spawning on the network
         Arrow arrowScript = arrow.GetComponent<Arrow>();
         if (arrowScript != null)
         {
-            arrowScript.damage = Mathf.RoundToInt(Mathf.Lerp(minDamage, maxDamage, chargeAmount));
+            arrowScript.damage = Mathf.RoundToInt(
+                Mathf.Lerp(minDamage, maxDamage, chargeAmount));
             arrowScript.shooterOwnerId = OwnerClientId;
             arrowScript.shooterIsPink = isPink;
         }
 
+        // Ignore collision between the arrow and everything on the Player layer
+        // so it doesn't hit the shooter's weapon or body
+        Collider arrowCollider = arrow.GetComponent<Collider>();
+        if (arrowCollider != null)
+        {
+            Collider[] shooterColliders = GetComponentsInParent<Collider>(true);
+            foreach (Collider col in shooterColliders)
+            {
+                Physics.IgnoreCollision(arrowCollider, col);
+            }
+        }
+
+        // Spawn on the network so all clients see it
         NetworkObject netObj = arrow.GetComponent<NetworkObject>();
         if (netObj != null) netObj.Spawn();
 
-        float velocity = Mathf.Lerp(minVelocity, maxVelocity, chargeAmount);
+        // Set velocity directly — predictable regardless of arrow mass
+        float speed = Mathf.Lerp(minVelocity, maxVelocity, chargeAmount);
         Rigidbody rb = arrow.GetComponent<Rigidbody>();
         if (rb != null)
         {
-            rb.linearVelocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
-            rb.AddForce(dir * velocity, ForceMode.Impulse);
-        }
-
-        StartCoroutine(DestroyArrowAfterTime(arrow, arrowPrefabLifeTime));
-    }
-
-    private IEnumerator DestroyArrowAfterTime(GameObject arrow, float delay)
-    {
-        yield return new WaitForSeconds(delay);
-        if (arrow != null)
-        {
-            NetworkObject netObj = arrow.GetComponent<NetworkObject>();
-            if (netObj != null && netObj.IsSpawned)
-                netObj.Despawn();
-            else
-                Destroy(arrow);
+            rb.linearVelocity = direction * speed;
         }
     }
 }
