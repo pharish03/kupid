@@ -1,8 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
-using Unity.Netcode;
 
-public class Weapon : NetworkBehaviour
+public class Weapon : MonoBehaviour
 {
     [Header("References")]
     public Camera playerCamera;
@@ -15,23 +14,37 @@ public class Weapon : NetworkBehaviour
     public LayerMask aimMask = ~0;
 
     [Header("Charge")]
-    public float maxChargeTime = 1f;
+    public float maxChargeTime = 1.0f;
+    [Tooltip("Minimum charge (0-1) required to actually fire. Below this, releasing cancels the shot.")]
+    [Range(0f, 1f)] public float minChargeToFire = 0.15f;
     public float minVelocity = 15f;
     public float maxVelocity = 60f;
+
+    [Header("Cooldown")]
+    [Tooltip("Time after firing before the player can draw again")]
+    public float fireCooldown = 0.75f;
 
     [Header("Effects During Charge")]
     [Range(0.05f, 1f)] public float moveSlowMultiplier = 0.25f;
     public float normalFOV = 90f;
     public float zoomFOV = 35f;
-    public float zoomLerpSpeed = 20f;
+    public float zoomLerpSpeed = 12f;
 
     [Header("Damage")]
     public int minDamage = 10;
     public int maxDamage = 50;
 
+    [Header("Arrow Spawn Offset")]
+    [Tooltip("How far forward from arrowSpawn to actually spawn the arrow")]
+    public float spawnForwardOffset = 1.5f;
+
+    [Header("Animation")]
+    public Animator animator;
+
     private InputAction fireAction;
     private bool isCharging;
     private float charge01;
+    private float cooldownTimer;
 
     void Awake()
     {
@@ -40,14 +53,8 @@ public class Weapon : NetworkBehaviour
         fireAction.AddBinding("<Gamepad>/rightTrigger");
     }
 
-    public override void OnNetworkSpawn()
+    void Start()
     {
-        if (!IsOwner)
-        {
-            enabled = false;
-            return;
-        }
-
         fireAction.Enable();
         if (playerCamera == null) playerCamera = Camera.main;
     }
@@ -56,44 +63,118 @@ public class Weapon : NetworkBehaviour
 
     void Update()
     {
-        if (!IsOwner || playerCamera == null) return;
+        if (playerCamera == null) return;
 
-        // Start charging
-        if (fireAction.WasPressedThisFrame())
+        // Tick cooldown
+        if (cooldownTimer > 0f)
+            cooldownTimer -= Time.deltaTime;
+
+        // --- PRESS: Start drawing the bow ---
+        if (fireAction.WasPressedThisFrame() && cooldownTimer <= 0f && !isCharging)
         {
             isCharging = true;
             charge01 = 0f;
+
             if (playerMovement != null)
                 playerMovement.speedMultiplier = moveSlowMultiplier;
+
+            if (animator != null)
+            {
+                animator.ResetTrigger("Fire");
+                animator.SetBool("IsDrawing", true);
+            }
         }
 
-        // Accumulate charge
+        // --- HOLD: Charge the bow ---
         if (isCharging && fireAction.IsPressed())
         {
             charge01 += Time.deltaTime / Mathf.Max(0.01f, maxChargeTime);
             charge01 = Mathf.Clamp01(charge01);
+
+            if (animator != null)
+                animator.SetFloat("ChargeAmount", charge01);
         }
 
-        // Release — fire the arrow
+        // --- RELEASE: Fire or cancel ---
         if (isCharging && fireAction.WasReleasedThisFrame())
         {
-            bool isPink = gameObject.CompareTag("PinkTeam");
-            Vector3 aimPoint = GetAimPoint();
-            Vector3 spawnPos = arrowSpawn.position;
-            Vector3 dir = (aimPoint - spawnPos).normalized;
+            if (charge01 >= minChargeToFire)
+            {
+                // Enough charge — fire the arrow
+                FireArrow();
+                cooldownTimer = fireCooldown;
 
-            RequestFireArrowServerRpc(charge01, spawnPos, dir, isPink);
+                if (animator != null)
+                {
+                    animator.SetBool("IsDrawing", false);
+                    animator.SetTrigger("Fire");
+                    animator.SetFloat("ChargeAmount", 0f);
+                }
+            }
+            else
+            {
+                // Not enough charge — cancel, no arrow fired
+                if (animator != null)
+                {
+                    animator.SetBool("IsDrawing", false);
+                    animator.SetFloat("ChargeAmount", 0f);
+                }
+            }
 
             isCharging = false;
             charge01 = 0f;
+
             if (playerMovement != null)
                 playerMovement.speedMultiplier = 1f;
         }
 
-        // Zoom FOV tied to charge progress for gradual zoom
+        // --- Zoom FOV tied to charge ---
         float targetFov = Mathf.Lerp(normalFOV, zoomFOV, charge01);
         playerCamera.fieldOfView = Mathf.Lerp(
             playerCamera.fieldOfView, targetFov, Time.deltaTime * zoomLerpSpeed);
+    }
+
+    private void FireArrow()
+    {
+        Vector3 aimPoint = GetAimPoint();
+        Vector3 spawnPos = arrowSpawn.position;
+        Vector3 dir = (aimPoint - spawnPos).normalized;
+
+        // Offset spawn forward to prevent arrow from spawning inside player/ground
+        spawnPos += dir * spawnForwardOffset;
+
+        GameObject arrow = Instantiate(arrowPrefab, spawnPos, Quaternion.LookRotation(dir));
+
+        // Configure arrow — damage scales with charge
+        Arrow arrowScript = arrow.GetComponent<Arrow>();
+        if (arrowScript != null)
+        {
+            arrowScript.damage = Mathf.RoundToInt(Mathf.Lerp(minDamage, maxDamage, charge01));
+            arrowScript.shooter = playerMovement.gameObject;
+        }
+
+        // Ignore collision between arrow and shooter
+        Collider arrowCollider = arrow.GetComponent<Collider>();
+        if (arrowCollider != null)
+        {
+            Collider[] shooterColliders = playerMovement.GetComponentsInChildren<Collider>(true);
+            foreach (Collider col in shooterColliders)
+            {
+                Physics.IgnoreCollision(arrowCollider, col);
+            }
+
+            Collider weaponCollider = GetComponent<Collider>();
+            if (weaponCollider != null)
+                Physics.IgnoreCollision(arrowCollider, weaponCollider);
+        }
+
+        // Arrow speed scales with charge
+        float speed = Mathf.Lerp(minVelocity, maxVelocity, charge01);
+        Rigidbody rb = arrow.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.linearVelocity = dir * speed;
+        }
     }
 
     private Vector3 GetAimPoint()
@@ -103,48 +184,5 @@ public class Weapon : NetworkBehaviour
                 QueryTriggerInteraction.Ignore))
             return hit.point;
         return ray.origin + ray.direction * aimMaxDistance;
-    }
-
-    [ServerRpc]
-    private void RequestFireArrowServerRpc(
-        float chargeAmount, Vector3 spawnPos, Vector3 direction, bool isPink)
-    {
-        GameObject arrow = Instantiate(
-            arrowPrefab, spawnPos, Quaternion.LookRotation(direction));
-
-        // Configure arrow
-        Arrow arrowScript = arrow.GetComponent<Arrow>();
-        if (arrowScript != null)
-        {
-            arrowScript.damage = Mathf.RoundToInt(
-                Mathf.Lerp(minDamage, maxDamage, chargeAmount));
-            arrowScript.shooterOwnerId = OwnerClientId;
-            arrowScript.shooterIsPink = isPink;
-        }
-
-        // Ignore collision between arrow and shooter
-        Collider arrowCollider = arrow.GetComponent<Collider>();
-        if (arrowCollider != null)
-        {
-            Collider[] shooterColliders = GetComponentsInParent<Collider>(true);
-            foreach (Collider col in shooterColliders)
-            {
-                Physics.IgnoreCollision(arrowCollider, col);
-            }
-        }
-
-        // Spawn on network
-        NetworkObject netObj = arrow.GetComponent<NetworkObject>();
-        if (netObj != null) netObj.Spawn();
-
-        // Set velocity directly — predictable regardless of mass
-        float speed = Mathf.Lerp(minVelocity, maxVelocity, chargeAmount);
-        Rigidbody rb = arrow.GetComponent<Rigidbody>();
-        if (rb != null)
-        {
-            rb.linearVelocity = direction * speed;
-        }
-
-        // Arrow manages its own lifetime via maxLifetime — no coroutine needed
     }
 }

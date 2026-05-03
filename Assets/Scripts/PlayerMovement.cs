@@ -1,9 +1,9 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using Unity.Netcode;
 
 [RequireComponent(typeof(CharacterController))]
-public class PlayerMovement : NetworkBehaviour
+public class PlayerMovement : MonoBehaviour
 {
     private CharacterController controller;
 
@@ -37,16 +37,23 @@ public class PlayerMovement : NetworkBehaviour
     public float glideGravityMultiplier = 0.25f;
     public float maxGlideFallSpeed = -6f;
 
-    // Health
-    public NetworkVariable<int> currentHealth = new NetworkVariable<int>(100,
-        NetworkVariableReadPermission.Everyone,
-        NetworkVariableWritePermission.Server);
+    [Header("Health")]
+    public int maxHealth = 100;
+    public int currentHealth = 100;
 
-    public bool IsDead => currentHealth.Value <= 0;
+    [Header("Respawn")]
+    public Transform spawnPoint;
+    public float respawnDelay = 5f;
+
+    [Header("Animation")]
+    public Animator animator;
+
+    public bool IsDead => currentHealth <= 0;
+    public bool IsRespawning { get; private set; }
+    public float RespawnTimer { get; private set; }
 
     private Vector3 velocity;
     private bool isGrounded;
-    private bool isTeleporting;
 
     private float coyoteTimer = 0f;
     private float jumpBufferTimer = 0f;
@@ -61,17 +68,25 @@ public class PlayerMovement : NetworkBehaviour
     private float currentSpeedMultiplier = 1f;
     private float standingCameraLocalY;
 
-    public override void OnNetworkSpawn()
+    void Awake()
     {
-        if (!IsOwner)
+        controller = GetComponent<CharacterController>();
+    }
+
+    void Start()
+    {
+        standingHeight = controller.height;
+        if (cameraRoot != null)
+            standingCameraLocalY = cameraRoot.localPosition.y;
+
+        currentHealth = maxHealth;
+
+        // If no spawn point assigned, create one at starting position
+        if (spawnPoint == null)
         {
-            if (cameraRoot != null)
-            {
-                Camera cam = cameraRoot.GetComponentInChildren<Camera>();
-                if (cam != null) cam.gameObject.SetActive(false);
-            }
-            enabled = false;
-            return;
+            GameObject spawnObj = new GameObject("SpawnPoint");
+            spawnObj.transform.position = transform.position;
+            spawnPoint = spawnObj.transform;
         }
 
         InitInput();
@@ -98,18 +113,6 @@ public class PlayerMovement : NetworkBehaviour
         shiftAction.Enable();
     }
 
-    void Awake()
-    {
-        controller = GetComponent<CharacterController>();
-    }
-
-    void Start()
-    {
-        standingHeight = controller.height;
-        if (cameraRoot != null)
-            standingCameraLocalY = cameraRoot.localPosition.y;
-    }
-
     void OnDisable()
     {
         moveAction?.Disable();
@@ -119,8 +122,7 @@ public class PlayerMovement : NetworkBehaviour
 
     void Update()
     {
-        if (!IsOwner || IsDead || isTeleporting) return;
-        if (!ControllerReady()) return;
+        if (IsDead) return;
 
         isGrounded = controller.isGrounded;
 
@@ -157,7 +159,7 @@ public class PlayerMovement : NetworkBehaviour
 
         float airControl = isGrounded ? 1f : airControlMultiplier;
         Vector3 finalMove = moveDirWorld * (speed * speedMultiplier * currentSpeedMultiplier * airControl);
-        SafeMove(finalMove * Time.deltaTime);
+        controller.Move(finalMove * Time.deltaTime);
 
         float effectiveGravity = gravity;
         if (state == MoveState.Gliding && !isGrounded)
@@ -168,10 +170,9 @@ public class PlayerMovement : NetworkBehaviour
         }
 
         velocity.y += effectiveGravity * Time.deltaTime;
-        SafeMove(velocity * Time.deltaTime);
+        controller.Move(velocity * Time.deltaTime);
 
-        if (ControllerReady())
-            isGrounded = controller.isGrounded;
+        isGrounded = controller.isGrounded;
 
         if (isGrounded)
             coyoteTimer = coyoteTime;
@@ -189,74 +190,87 @@ public class PlayerMovement : NetworkBehaviour
 
         if (isGrounded && velocity.y < 0f)
             velocity.y = 0f;
-    }
 
-    private bool ControllerReady()
-    {
-        return controller != null && controller.enabled && gameObject.activeInHierarchy;
-    }
-
-    private void SafeMove(Vector3 motion)
-    {
-        if (!ControllerReady()) return;
-        controller.Move(motion);
-    }
-
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    public void TakeDamageServerRpc(int damage)
-    {
-        if (IsDead) return;
-        currentHealth.Value = Mathf.Max(0, currentHealth.Value - damage);
-        Debug.Log($"Player took {damage} damage. Health: {currentHealth.Value}");
-        if (IsDead)
+        // Animation
+        if (animator != null)
         {
-            DieClientRpc();
+            animator.SetFloat("MoveX", input.x, 0.1f, Time.deltaTime);
+            animator.SetFloat("MoveY", input.y, 0.1f, Time.deltaTime);
         }
     }
 
-    [ClientRpc]
-    private void DieClientRpc()
+    // ==================== HEALTH & DAMAGE ====================
+
+    public void TakeDamage(int damage)
+    {
+        if (IsDead) return;
+        currentHealth = Mathf.Max(0, currentHealth - damage);
+        Debug.Log($"Player took {damage} damage. Health: {currentHealth}");
+
+        if (IsDead)
+        {
+            Die();
+            StartCoroutine(RespawnCountdown());
+        }
+    }
+
+    private void Die()
     {
         foreach (var r in GetComponentsInChildren<Renderer>()) r.enabled = false;
-        if (controller != null) controller.enabled = false;
+        controller.enabled = false;
+
         moveAction?.Disable();
         jumpAction?.Disable();
         shiftAction?.Disable();
+
+        if (animator != null)
+            animator.SetFloat("Speed", 0f);
     }
 
-    public void ResetPlayer(Vector3 spawnPosition)
+    // ==================== RESPAWN ====================
+
+    private IEnumerator RespawnCountdown()
     {
-        if (!IsServer) return;
-        currentHealth.Value = 100;
-        TeleportClientRpc(spawnPosition);
+        IsRespawning = true;
+        RespawnTimer = respawnDelay;
+
+        while (RespawnTimer > 0f)
+        {
+            RespawnTimer -= Time.deltaTime;
+            yield return null;
+        }
+
+        RespawnTimer = 0f;
+        Respawn();
     }
 
-    [ClientRpc]
-    private void TeleportClientRpc(Vector3 spawnPosition)
+    private void Respawn()
     {
-        isTeleporting = true;
+        currentHealth = maxHealth;
         velocity = Vector3.zero;
 
-        if (controller != null) controller.enabled = false;
-        transform.position = spawnPosition;
-        if (controller != null) controller.enabled = true;
+        controller.enabled = false;
+        transform.position = spawnPoint != null ? spawnPoint.position : Vector3.zero;
+        controller.enabled = true;
 
         foreach (var r in GetComponentsInChildren<Renderer>()) r.enabled = true;
 
-        if (IsOwner)
-        {
-            moveAction?.Enable();
-            jumpAction?.Enable();
-            shiftAction?.Enable();
-        }
+        moveAction?.Enable();
+        jumpAction?.Enable();
+        shiftAction?.Enable();
 
-        isTeleporting = false;
+        IsRespawning = false;
     }
+
+    public void Heal(int amount)
+    {
+        currentHealth = Mathf.Min(maxHealth, currentHealth + amount);
+    }
+
+    // ==================== CROUCH ====================
 
     private void HandleCrouchSizing(bool shiftReleased)
     {
-        if (!ControllerReady()) return;
-
         float targetHeight = (state == MoveState.Crouching) ? crouchHeight : standingHeight;
 
         if (state == MoveState.Normal && shiftReleased)
@@ -277,8 +291,6 @@ public class PlayerMovement : NetworkBehaviour
     private void HandleCameraCrouch()
     {
         if (cameraRoot == null) return;
-        if (!ControllerReady()) return;
-
         float heightDelta = standingHeight - controller.height;
         float targetY = standingCameraLocalY - heightDelta - crouchCameraExtraDrop;
         Vector3 local = cameraRoot.localPosition;

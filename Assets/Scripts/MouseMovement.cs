@@ -26,12 +26,10 @@ public class MouseMovement : MonoBehaviour
         float mouseX = delta.x * sensitivity * Time.deltaTime;
         float mouseY = delta.y * sensitivity * Time.deltaTime;
 
-        // camera pitch (up/down)
         xRotation -= mouseY;
         xRotation = Mathf.Clamp(xRotation, bottomClamp, topClamp);
         transform.localRotation = Quaternion.Euler(xRotation, 0f, 0f);
 
-        // player yaw (left/right)
         if (playerBody != null)
             playerBody.Rotate(Vector3.up * mouseX);
     }
