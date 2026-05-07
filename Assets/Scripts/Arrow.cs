@@ -53,13 +53,26 @@ public class Arrow : MonoBehaviour
     {
         if (hasHit) return;
 
+        // --- Ignore shooter ---
+        if (collision.gameObject == shooter) return;
+
+        Debug.Log("Hit something, its layer is:" + collision.gameObject.layer);
+        // --- Enemy hit --- (check FIRST, before any bounce logic)
+        if (collision.gameObject.layer == LayerMask.NameToLayer("Enemy"))
+        {
+            Debug.Log("Hit an Enemy");
+            hasHit = true;
+            EnemyAI enemy = collision.gameObject.GetComponent<EnemyAI>();
+            if (enemy != null)
+                enemy.TakeDamage(damage);
+            Destroy(gameObject);
+            return;
+        }
+
         // --- Player hit ---
         PlayerMovement player = collision.gameObject.GetComponent<PlayerMovement>();
         if (player != null)
         {
-            // Don't hit the shooter
-            if (collision.gameObject == shooter) return;
-
             hasHit = true;
             player.TakeDamage(damage);
             Destroy(gameObject);
@@ -69,12 +82,10 @@ public class Arrow : MonoBehaviour
         // --- Environment hit ---
         if (bounceCount < maxBounces)
         {
-            // Manual bounce using reflection
             Vector3 incomingVel = rb.linearVelocity;
             Vector3 surfaceNormal = collision.contacts[0].normal;
             Vector3 reflectedVel = Vector3.Reflect(incomingVel, surfaceNormal);
             reflectedVel *= bounceSpeedRetention;
-
             rb.linearVelocity = reflectedVel;
             bounceCount++;
         }
@@ -85,7 +96,6 @@ public class Arrow : MonoBehaviour
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
             rb.isKinematic = true;
-
             Destroy(gameObject, stickDestroyDelay);
         }
     }
