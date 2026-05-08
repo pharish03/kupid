@@ -1,22 +1,17 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
 
 public class PlayerHealthUI : MonoBehaviour
 {
     [Header("References")]
     public PlayerMovement player;
-
     [Header("Health Bar")]
     public Image healthBarFill;
-
     [Header("Health Text")]
     public TextMeshProUGUI healthText;
-
     [Header("Respawn")]
     public TextMeshProUGUI respawnText;
-    public GameObject respawnPanel;
-
     [Header("Colors")]
     public Color fullHealthColor = new Color(0.2f, 0.8f, 0.2f);
     public Color midHealthColor = new Color(0.9f, 0.7f, 0.1f);
@@ -24,10 +19,16 @@ public class PlayerHealthUI : MonoBehaviour
     public float midHealthThreshold = 0.6f;
     public float lowHealthThreshold = 0.3f;
 
+    private float fullWidth;
+    private RectTransform fillRect;
+
     void Start()
     {
-        if (respawnPanel != null)
-            respawnPanel.SetActive(false);
+        if (healthBarFill != null)
+        {
+            fillRect = healthBarFill.GetComponent<RectTransform>();
+            fullWidth = fillRect.sizeDelta.x;
+        }
     }
 
     void Update()
@@ -37,7 +38,6 @@ public class PlayerHealthUI : MonoBehaviour
             player = FindFirstObjectByType<PlayerMovement>();
             if (player == null) return;
         }
-
         UpdateHealthBar();
         UpdateRespawnUI();
     }
@@ -47,9 +47,9 @@ public class PlayerHealthUI : MonoBehaviour
         float healthPercent = (float)player.currentHealth / player.maxHealth;
         healthPercent = Mathf.Clamp01(healthPercent);
 
-        if (healthBarFill != null)
+        if (fillRect != null)
         {
-            healthBarFill.fillAmount = healthPercent;
+            fillRect.sizeDelta = new Vector2(fullWidth * healthPercent, fillRect.sizeDelta.y);
 
             if (healthPercent <= lowHealthThreshold)
                 healthBarFill.color = lowHealthColor;
@@ -68,10 +68,6 @@ public class PlayerHealthUI : MonoBehaviour
     private void UpdateRespawnUI()
     {
         bool dead = player.IsDead;
-
-        if (respawnPanel != null)
-            respawnPanel.SetActive(dead);
-
         if (dead && respawnText != null)
         {
             float timer = player.RespawnTimer;

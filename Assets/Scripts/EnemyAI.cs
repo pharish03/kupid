@@ -106,7 +106,8 @@ public class EnemyAI : MonoBehaviour
 
         if (!alreadyAttacked)
         {
-            // TODO: Implement sword attack HERE
+            PlayerMovement playerScript = player.GetComponent<PlayerMovement>();
+            playerScript.TakeDamage(10);
             alreadyAttacked = true;
             Invoke(nameof(ResetAttack), timeBetweenAttacks);
         }

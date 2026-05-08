@@ -1,6 +1,8 @@
 using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 
 [RequireComponent(typeof(CharacterController))]
 public class PlayerMovement : MonoBehaviour
@@ -68,6 +70,13 @@ public class PlayerMovement : MonoBehaviour
     private float currentSpeedMultiplier = 1f;
     private float standingCameraLocalY;
 
+    [Header("Death Effects")]
+    public float deathCameraRollAngle = 85f;      
+    public float deathCameraRollSpeed = 3f;        
+    public float deathCameraDropAmount = 0.4f;     
+    public Image deathOverlay;                     
+    public float deathOverlayMaxAlpha = 0.55f;     
+    public float deathOverlayFadeSpeed = 2f;      
     void Awake()
     {
         controller = GetComponent<CharacterController>();
@@ -214,6 +223,7 @@ public class PlayerMovement : MonoBehaviour
         }
     }
 
+
     private void Die()
     {
         foreach (var r in GetComponentsInChildren<Renderer>()) r.enabled = false;
@@ -225,6 +235,54 @@ public class PlayerMovement : MonoBehaviour
 
         if (animator != null)
             animator.SetFloat("Speed", 0f);
+
+        // NEW: Trigger death camera and red screen effects
+        if (cameraRoot != null)
+            StartCoroutine(DeathCameraEffect());
+
+        if (deathOverlay != null)
+            StartCoroutine(DeathOverlayEffect());
+    }
+
+
+    // ==================== DEATH EFFECTS ====================
+
+    private IEnumerator DeathCameraEffect()
+    {
+        Quaternion startRot = cameraRoot.localRotation;
+        // Roll sideways (Z axis) and tilt slightly down (X axis)
+        Quaternion targetRot = Quaternion.Euler(15f, 0f, deathCameraRollAngle);
+
+        Vector3 startPos = cameraRoot.localPosition;
+        Vector3 targetPos = new Vector3(startPos.x, startPos.y - deathCameraDropAmount, startPos.z);
+
+        float t = 0f;
+        while (t < 1f)
+        {
+            t += Time.deltaTime * deathCameraRollSpeed;
+            float smooth = Mathf.SmoothStep(0f, 1f, t);
+            cameraRoot.localRotation = Quaternion.Slerp(startRot, targetRot, smooth);
+            cameraRoot.localPosition = Vector3.Lerp(startPos, targetPos, smooth);
+            yield return null;
+        }
+
+        cameraRoot.localRotation = targetRot;
+        cameraRoot.localPosition = targetPos;
+    }
+
+    private IEnumerator DeathOverlayEffect()
+    {
+        Color c = deathOverlay.color;
+        c.a = 0f;
+        deathOverlay.color = c;
+        deathOverlay.gameObject.SetActive(true);
+
+        while (c.a < deathOverlayMaxAlpha)
+        {
+            c.a = Mathf.MoveTowards(c.a, deathOverlayMaxAlpha, Time.deltaTime * deathOverlayFadeSpeed);
+            deathOverlay.color = c;
+            yield return null;
+        }
     }
 
     // ==================== RESPAWN ====================
@@ -255,9 +313,30 @@ public class PlayerMovement : MonoBehaviour
 
         foreach (var r in GetComponentsInChildren<Renderer>()) r.enabled = true;
 
+        // Reset camera rotation and position
+        if (cameraRoot != null)
+        {
+            cameraRoot.localRotation = Quaternion.identity;
+            cameraRoot.localPosition = new Vector3(
+                cameraRoot.localPosition.x,
+                standingCameraLocalY,
+                cameraRoot.localPosition.z
+            );
+        }
+
+        // Hide red overlay
+        if (deathOverlay != null)
+        {
+            deathOverlay.gameObject.SetActive(false);
+            Color c = deathOverlay.color;
+            c.a = 0f;
+            deathOverlay.color = c;
+        }
+
         moveAction?.Enable();
         jumpAction?.Enable();
         shiftAction?.Enable();
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
 
         IsRespawning = false;
     }
