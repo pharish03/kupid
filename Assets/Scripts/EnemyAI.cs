@@ -16,6 +16,7 @@ public class EnemyAI : MonoBehaviour
     public bool alreadyAttacked;
 
     public float health;
+    public float attackDamage = 10f;
     public float sightRange, attackRange;
     public bool playerInSightRange, playerInAttackRange;
 
@@ -107,7 +108,7 @@ public class EnemyAI : MonoBehaviour
         if (!alreadyAttacked)
         {
             PlayerMovement playerScript = player.GetComponent<PlayerMovement>();
-            playerScript.TakeDamage(10);
+            playerScript.TakeDamage((int)attackDamage);
             alreadyAttacked = true;
             Invoke(nameof(ResetAttack), timeBetweenAttacks);
         }
@@ -152,7 +153,7 @@ public class EnemyAI : MonoBehaviour
         }
         else if (health <= 25 && health > 0)
         {
-            // Scared — flee the player permanently
+            // Scared ï¿½ flee the player permanently
             isScared = true;
             fleeTimer = 0f;
             SetAnimationState(false, false, false, false, true, false);
